@@ -5,7 +5,7 @@ Local FastAPI app for creating, curating, captioning, exporting, and training Lo
 - **Anima LoRA**, compatible with `kohya-ss/sd-scripts` and `anima_train_network.py`.
 - **Qwen Image Edit-2511 LoRA**, compatible with `kohya-ss/musubi-tuner`.
 
-The app works fully locally for image uploads, manual caption editing, and dataset export. Codex, training, and Modal features are optional.
+The app works fully locally for image uploads, manual caption editing, and dataset export. Codex image generation can also be used to create synthetic datasets from prompts and references. Codex, training, and Modal features are optional.
 
 ## Requirements
 
@@ -32,9 +32,10 @@ Open http://127.0.0.1:8000 on this machine, or `http://<your-machine-ip>:8000` f
    - `Anima`: images with tag-style captions.
    - `Qwen Image Edit-2511`: control/target pairs with edit instructions.
 3. Upload images or edit pairs.
-4. Edit captions manually, or use Codex to generate captions.
-5. Download `dataset.toml` or `export.zip`.
-6. Optionally launch training from the dataset page.
+4. Optionally use Codex image generation to create synthetic training images or Qwen edit pairs.
+5. Edit captions manually, or use Codex to generate captions.
+6. Download `dataset.toml` or `export.zip`.
+7. Optionally launch training from the dataset page.
 
 ## Output Structure
 
@@ -112,11 +113,13 @@ codex login
 
 Available features:
 
-- Generate images for Anima datasets.
-- Generate control/target pairs for Qwen Image Edit-2511.
+- Generate synthetic images for Anima datasets from prompts and optional reference images.
+- Generate synthetic control/target edit pairs for Qwen Image Edit-2511.
 - Import recent images from `~/.codex/generated_images`.
 - Caption a single image or a batch.
 - Curate raw images using references.
+
+This makes it possible to build fully synthetic datasets: describe the target concept, generate candidate images or edit pairs with Codex imagegen, import them into the dataset, then caption, curate, export, or train from the same UI.
 
 Control how many Codex sessions can run in parallel:
 
