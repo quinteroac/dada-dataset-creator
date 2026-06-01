@@ -1,0 +1,408 @@
+{% extends "base.html" %}
+{% block title %}{{ settings.name }} · Dada Dataset Creator{% endblock %}
+{% block content %}
+<section class="dataset-header">
+  <div>
+    <h1>{{ settings.name }}</h1>
+    <p><code>datasets/{{ settings.slug }}</code></p>
+  </div>
+  <div class="actions">
+    <a class="button secondary" href="/datasets/{{ settings.slug }}/curator">Curator</a>
+    <a class="button secondary" href="/datasets/{{ settings.slug }}/dataset.toml">dataset.toml</a>
+    <a class="button" href="/datasets/{{ settings.slug }}/export.zip">Export zip</a>
+  </div>
+</section>
+
+{% if message %}<div class="notice">{{ message }}</div>{% endif %}
+{% if error %}<div class="notice error">{{ error }}</div>{% endif %}
+
+<section class="workspace">
+  <div class="panel">
+    <h2>Settings</h2>
+    <form method="post" action="/datasets/{{ settings.slug }}/settings" class="form-grid compact">
+      <label>
+        Token / fallback instruction
+        <input name="trigger_token" value="{{ settings.trigger_token }}" required>
+      </label>
+      <label>
+        Width
+        <input type="number" name="resolution_width" value="{{ settings.resolution_width }}" min="16" step="16">
+      </label>
+      <label>
+        Height
+        <input type="number" name="resolution_height" value="{{ settings.resolution_height }}" min="16" step="16">
+      </label>
+      <label>
+        Batch
+        <input type="number" name="batch_size" value="{{ settings.batch_size }}" min="1">
+      </label>
+      <label>
+        Repeats
+        <input type="number" name="num_repeats" value="{{ settings.num_repeats }}" min="1">
+      </label>
+      <label>
+        Min bucket
+        <input type="number" name="min_bucket_reso" value="{{ settings.min_bucket_reso }}" min="16" step="16">
+      </label>
+      <label>
+        Max bucket
+        <input type="number" name="max_bucket_reso" value="{{ settings.max_bucket_reso }}" min="16" step="16">
+      </label>
+      <label>
+        Bucket step
+        <input type="number" name="bucket_reso_steps" value="{{ settings.bucket_reso_steps }}" min="16" step="16">
+      </label>
+      <button type="submit">Save settings</button>
+    </form>
+  </div>
+
+  {% if settings.dataset_type == qwen_dataset_type %}
+  <div class="panel">
+    <h2>Add edit pairs</h2>
+    <form method="post" action="/datasets/{{ settings.slug }}/upload-edit-pairs" enctype="multipart/form-data" class="stack">
+      <label>
+        Control/start images
+        <input type="file" name="controls" accept="image/png,image/jpeg,image/webp" multiple required>
+      </label>
+      <label>
+        Target edited images
+        <input type="file" name="targets" accept="image/png,image/jpeg,image/webp" multiple required>
+      </label>
+      <label>
+        Instructions, one per line
+        <textarea name="instructions" rows="4" placeholder="Change the background to a neon city at night."></textarea>
+      </label>
+      <button type="submit">Upload pairs</button>
+    </form>
+  </div>
+  {% else %}
+  <div class="panel">
+    <h2>Add images</h2>
+    <form method="post" action="/datasets/{{ settings.slug }}/upload" enctype="multipart/form-data" class="stack">
+      <input type="file" name="files" accept="image/png,image/jpeg,image/webp" multiple required>
+      <button type="submit">Upload images</button>
+    </form>
+  </div>
+  {% endif %}
+
+  <div class="panel">
+    <h2>Optional Codex generation</h2>
+    <form method="post" action="/datasets/{{ settings.slug }}/references" enctype="multipart/form-data" class="stack">
+      <input type="file" name="files" accept="image/png,image/jpeg,image/webp" multiple>
+      <button type="submit" class="secondary">Upload references</button>
+    </form>
+    {% if references %}
+      <div class="reference-strip">
+        {% for reference in references %}
+          <img src="/media/datasets/{{ settings.slug }}/references/{{ reference.name }}" alt="Reference {{ loop.index }}">
+        {% endfor %}
+      </div>
+    {% endif %}
+    <form method="post" action="/datasets/{{ settings.slug }}{% if settings.dataset_type == qwen_dataset_type %}/generate-edit-pairs{% else %}/generate{% endif %}" class="stack">
+      <textarea name="prompt" rows="5" required placeholder="{% if settings.dataset_type == qwen_dataset_type %}Describe the edit-pair domain and variations{% else %}Prompt base for Codex image generation{% endif %}"></textarea>
+      <label>
+        Count
+        <input type="number" name="count" value="1" min="1" max="12">
+      </label>
+      <button type="submit">{% if settings.dataset_type == qwen_dataset_type %}Generate edit pairs with Codex{% else %}Generate with Codex{% endif %}</button>
+    </form>
+    <form method="post" action="/datasets/{{ settings.slug }}/import-recent-codex" class="form-grid compact">
+      <label>
+        Minutes
+        <input type="number" name="minutes" value="60" min="1">
+      </label>
+      <label>
+        Limit
+        <input type="number" name="limit" value="12" min="1" max="48">
+      </label>
+      <button type="submit" class="secondary">Import recent Codex images</button>
+    </form>
+  </div>
+</section>
+
+{% if settings.dataset_type == qwen_dataset_type %}
+<section class="training-panel">
+  <div class="jobs-header">
+    <div>
+      <h2>Qwen Edit-2511 Training</h2>
+      <p>Cache paired edit data and train a Musubi LoRA.</p>
+    </div>
+    <form method="post" action="/datasets/{{ settings.slug }}/setup-musubi-tuner">
+      <button type="submit" class="secondary">
+        {% if musubi_ready %}Check musubi-tuner{% else %}Setup musubi-tuner{% endif %}
+      </button>
+    </form>
+  </div>
+  <form method="post" action="/datasets/{{ settings.slug }}/train-qwen-edit" class="training-grid">
+    <label>
+      Edit-2511 DiT
+      <input name="dit" placeholder="/models/qwen/qwen_image_edit_2511_bf16.safetensors" required>
+    </label>
+    <label>
+      Qwen Image VAE
+      <input name="vae" placeholder="/models/qwen/qwen_image_vae.safetensors" required>
+    </label>
+    <label>
+      Qwen2.5-VL text encoder
+      <input name="text_encoder" placeholder="/models/qwen/qwen_2.5_vl_7b.safetensors" required>
+    </label>
+    <label>
+      Output name
+      <input name="output_name" value="{{ settings.slug }}_qwen_edit_lora">
+    </label>
+    <label>
+      Output dir
+      <input name="output_dir" value="datasets/{{ settings.slug }}/outputs">
+    </label>
+    <label>
+      Training target
+      <select name="training_backend" id="qwen-training-backend">
+        <option value="local" selected>Local GPU</option>
+        <option value="modal">Modal</option>
+      </select>
+    </label>
+    <label>
+      Network dim
+      <input type="number" name="network_dim" value="8" min="1">
+    </label>
+    <label>
+      Learning rate
+      <input name="learning_rate" value="5e-5">
+    </label>
+    <label>
+      Optimizer
+      <input name="optimizer_type" value="adamw8bit">
+    </label>
+    <label>
+      Epochs
+      <input type="number" name="max_train_epochs" value="16" min="1">
+    </label>
+    <label>
+      Save every N epochs
+      <input type="number" name="save_every_n_epochs" value="1" min="1">
+    </label>
+    <label>
+      VRAM preset
+      <select name="vram_preset" id="qwen-vram-preset">
+        <option value="fast_16gb" data-blocks="36" data-dim="8" selected>Fast 16GB</option>
+        <option value="balanced_16gb" data-blocks="40" data-dim="8">Balanced 16GB</option>
+        <option value="conservative_16gb" data-blocks="45" data-dim="8">Conservative 16GB</option>
+        <option value="aggressive_16gb" data-blocks="32" data-dim="8">Aggressive 16GB</option>
+      </select>
+    </label>
+    <label>
+      Blocks to swap
+      <input id="qwen-blocks-to-swap" name="blocks_to_swap" value="36">
+    </label>
+    <div class="toggle-row">
+      <label><input type="checkbox" name="gradient_checkpointing" value="true" checked> gradient checkpointing</label>
+      <label><input type="checkbox" name="fp8_base" value="true" checked> fp8 base</label>
+      <label><input type="checkbox" name="fp8_scaled" value="true" checked> fp8 scaled</label>
+      <label><input type="checkbox" name="fp8_vl" value="true" checked> fp8 VL cache</label>
+      <label><input type="checkbox" name="use_pinned_memory_for_block_swap" value="true" checked> pinned block swap</label>
+    </div>
+    <div class="wide modal-training-options">
+      <label>
+        Modal Volume
+        <input name="modal_volume_name" value="dada-qwen-edit">
+      </label>
+      <label>
+        Modal GPU
+        <input name="modal_gpu" value="L40S">
+      </label>
+      <label>
+        Modal timeout seconds
+        <input type="number" name="modal_timeout" value="86400" min="600">
+      </label>
+      <label>
+        Modal output dir
+        <input name="modal_output_dir" value="/data/outputs/{{ settings.slug }}">
+      </label>
+      <label><input type="checkbox" name="modal_bake_models" value="true" checked> bake local model files into Modal image</label>
+      <p class="muted">When baking is enabled, the DiT, VAE and text encoder fields may be local paths and Modal will copy them into the image as /models/dit.safetensors, /models/vae.safetensors and /models/text_encoder.safetensors.</p>
+    </div>
+    <label class="wide">
+      Extra args
+      <textarea name="extra_args" rows="3" placeholder="--mem_eff_save"></textarea>
+    </label>
+    <div class="wide command-preview">
+      <strong>Command preview</strong>
+      <code>qwen_image_cache_latents.py → qwen_image_cache_text_encoder_outputs.py → accelerate launch ... qwen_image_train_network.py --model_version=edit-2511 --network_module=networks.lora_qwen_image</code>
+    </div>
+    <button type="submit">Start Qwen Edit training</button>
+  </form>
+</section>
+{% else %}
+<section class="training-panel">
+  <div class="jobs-header">
+    <div>
+      <h2>Training</h2>
+      <p>Run Anima LoRA training from this dataset.</p>
+    </div>
+    <form method="post" action="/datasets/{{ settings.slug }}/setup-sd-scripts">
+      <button type="submit" class="secondary">
+        {% if training_ready %}Check sd-scripts{% else %}Setup sd-scripts{% endif %}
+      </button>
+    </form>
+  </div>
+  <form method="post" action="/datasets/{{ settings.slug }}/train" class="training-grid">
+    <label>
+      Anima DiT model
+      <input name="pretrained_model_name_or_path" placeholder="/models/anima/anima_dit.safetensors" required>
+    </label>
+    <label>
+      Qwen3 text encoder
+      <input name="qwen3" placeholder="/models/anima/qwen3" required>
+    </label>
+    <label>
+      Qwen-Image VAE
+      <input name="vae" placeholder="/models/anima/vae.safetensors" required>
+    </label>
+    <label>
+      LLM adapter
+      <input name="llm_adapter_path" placeholder="optional">
+    </label>
+    <label>
+      T5 tokenizer
+      <input name="t5_tokenizer_path" placeholder="optional">
+    </label>
+    <label>
+      Output name
+      <input name="output_name" value="{{ settings.slug }}_anima_lora">
+    </label>
+    <label>
+      Output dir
+      <input name="output_dir" value="datasets/{{ settings.slug }}/outputs">
+    </label>
+    <label>
+      Network dim
+      <input type="number" name="network_dim" value="8" min="1">
+    </label>
+    <label>
+      Learning rate
+      <input name="learning_rate" value="1e-4">
+    </label>
+    <label>
+      Optimizer
+      <input name="optimizer_type" value="AdamW8bit">
+    </label>
+    <label>
+      LR scheduler
+      <input name="lr_scheduler" value="constant">
+    </label>
+    <label>
+      Timestep sampling
+      <select name="timestep_sampling">
+        <option value="sigmoid">sigmoid</option>
+        <option value="sigma">sigma</option>
+        <option value="uniform">uniform</option>
+        <option value="shift">shift</option>
+        <option value="flux_shift">flux_shift</option>
+      </select>
+    </label>
+    <label>
+      Flow shift
+      <input name="discrete_flow_shift" value="1.0">
+    </label>
+    <label>
+      Epochs
+      <input type="number" name="max_train_epochs" value="10" min="1">
+    </label>
+    <label>
+      Save every N epochs
+      <input type="number" name="save_every_n_epochs" value="1" min="1">
+    </label>
+    <label>
+      Precision
+      <select name="mixed_precision">
+        <option value="bf16">bf16</option>
+        <option value="fp16">fp16</option>
+        <option value="no">no</option>
+      </select>
+    </label>
+    <label>
+      VAE chunk size
+      <input type="number" name="vae_chunk_size" value="64" min="1">
+    </label>
+    <div class="toggle-row">
+      <label><input type="checkbox" name="gradient_checkpointing" value="true" checked> gradient checkpointing</label>
+      <label><input type="checkbox" name="cache_latents" value="true" checked> cache latents</label>
+      <label><input type="checkbox" name="cache_text_encoder_outputs" value="true"> cache text outputs</label>
+      <label><input type="checkbox" name="vae_disable_cache" value="true" checked> disable VAE cache</label>
+      <label><input type="checkbox" name="train_text_encoder" value="true"> train text encoder</label>
+    </div>
+    <label class="wide">
+      Extra args
+      <textarea name="extra_args" rows="3" placeholder='--network_args "train_llm_adapter=True"'></textarea>
+    </label>
+    <div class="wide command-preview">
+      <strong>Command preview</strong>
+      <code>accelerate launch --num_cpu_threads_per_process 1 anima_train_network.py --dataset_config=datasets/{{ settings.slug }}/dataset.toml --network_module=networks.lora_anima ...</code>
+    </div>
+    <button type="submit">Start training</button>
+  </form>
+</section>
+{% endif %}
+
+<section class="jobs-panel" data-dataset-slug="{{ settings.slug }}">
+  <div class="jobs-header">
+    <div>
+      <h2>Codex jobs</h2>
+      <p>Live status for generation, imports, labeling, setup, and training.</p>
+    </div>
+    <form method="post" action="/datasets/{{ settings.slug }}/label-batch">
+      <button type="submit" class="secondary">{% if settings.dataset_type == qwen_dataset_type %}Write missing instructions{% else %}Label uncaptained images{% endif %}</button>
+    </form>
+  </div>
+  <div id="jobs-list" class="jobs-list"></div>
+</section>
+
+<section class="review">
+  <h2>Review and captions</h2>
+  {% if images %}
+    <div class="gallery{% if settings.dataset_type == qwen_dataset_type %} edit-pair-gallery{% endif %}">
+      {% for image in images %}
+        <article class="image-card">
+          {% if settings.dataset_type == qwen_dataset_type %}
+            <div class="pair-preview">
+              {% if image.control_exists %}
+                <figure>
+                  <img src="/media/datasets/{{ settings.slug }}/controls/{{ image.control_filename }}" alt="Control {{ image.control_filename }}">
+                  <figcaption>Control</figcaption>
+                </figure>
+              {% endif %}
+              <figure>
+                <img src="/media/datasets/{{ settings.slug }}/images/{{ image.filename }}" alt="{{ image.filename }}">
+                <figcaption>Target</figcaption>
+              </figure>
+            </div>
+          {% else %}
+            <img src="/media/datasets/{{ settings.slug }}/images/{{ image.filename }}" alt="{{ image.filename }}">
+          {% endif %}
+          <div class="image-meta">
+            <strong>{{ image.filename }}</strong>
+            <span>{{ image.source_type }}</span>
+          </div>
+          <form method="post" action="/datasets/{{ settings.slug }}/images/{{ image.stem }}/caption" class="stack">
+            <textarea name="caption" rows="4">{{ image.caption }}</textarea>
+            <textarea name="description" rows="3" placeholder="{% if settings.dataset_type == qwen_dataset_type %}Edit instruction notes{% else %}Long description{% endif %}">{{ image.description }}</textarea>
+            <button type="submit">Save {% if settings.dataset_type == qwen_dataset_type %}instruction{% else %}caption{% endif %}</button>
+          </form>
+          <form method="post" action="/datasets/{{ settings.slug }}/images/{{ image.stem }}/label">
+            <button type="submit" class="secondary">{% if settings.dataset_type == qwen_dataset_type %}Write instruction with Codex{% else %}Label with Codex{% endif %}</button>
+          </form>
+          <form method="post" action="/datasets/{{ settings.slug }}/images/{{ image.stem }}/delete" onsubmit="return confirm('Delete {{ image.filename }} from this dataset?');">
+            <button type="submit" class="danger">Delete image</button>
+          </form>
+        </article>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p class="empty">Upload or generate images to start labeling.</p>
+  {% endif %}
+</section>
+<script>
+  window.__initialJobs = {{ jobs | tojson }};
+</script>
+<script src="{{ url_for('static', path='/dataset.js') }}"></script>
+{% endblock %}

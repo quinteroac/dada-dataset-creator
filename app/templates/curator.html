@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+{% block title %}Curator · {{ settings.name }}{% endblock %}
+{% block content %}
+<section class="dataset-header">
+  <div>
+    <h1>Curator</h1>
+    <p><code>datasets/{{ settings.slug }}/raw</code></p>
+  </div>
+  <div class="actions">
+    <a class="button secondary" href="/datasets/{{ settings.slug }}">Dataset</a>
+    <a class="button secondary" href="/datasets/{{ settings.slug }}/dataset.toml">dataset.toml</a>
+    <a class="button" href="/datasets/{{ settings.slug }}/export.zip">Export zip</a>
+  </div>
+</section>
+
+{% if message %}<div class="notice">{{ message }}</div>{% endif %}
+{% if error %}<div class="notice error">{{ error }}</div>{% endif %}
+
+<section class="workspace">
+  <div class="panel">
+    <h2>Raw images</h2>
+    <form method="post" action="/datasets/{{ settings.slug }}/curator/raw" enctype="multipart/form-data" class="stack">
+      <input type="file" name="files" accept="image/png,image/jpeg,image/webp" multiple required>
+      <button type="submit">Upload raw images</button>
+    </form>
+  </div>
+
+  <div class="panel">
+    <h2>Reference images</h2>
+    <form method="post" action="/datasets/{{ settings.slug }}/curator/references" enctype="multipart/form-data" class="stack">
+      <input type="file" name="files" accept="image/png,image/jpeg,image/webp" multiple required>
+      <button type="submit" class="secondary">Upload references</button>
+    </form>
+  </div>
+</section>
+
+<section class="curator-panel">
+  <div class="jobs-header">
+    <div>
+      <h2>Curate raw images</h2>
+      <p>Transform raw images with Codex, optionally using references for style, colors, lighting, or photographic finish.</p>
+    </div>
+  </div>
+  <form id="curator-process" method="post" action="/datasets/{{ settings.slug }}/curator/process" class="stack">
+    <div class="form-grid compact">
+      <label>
+        Raw selection
+        <select name="selection_mode">
+          <option value="selected">Selected raw images</option>
+          <option value="all">All raw images</option>
+        </select>
+      </label>
+      <label>
+        Reference selection
+        <select name="reference_mode">
+          <option value="selected">Selected references</option>
+          <option value="all">All references</option>
+          <option value="none">No references</option>
+        </select>
+      </label>
+    </div>
+    <label>
+      Instructions
+      <textarea name="instruction" rows="4" required placeholder="Using the reference images, convert the raw images into this photography style and color palette."></textarea>
+    </label>
+
+    <div class="curator-columns">
+      <div>
+        <h3>Raw</h3>
+        {% if raw_images %}
+          <div class="selector-grid">
+            {% for image in raw_images %}
+              <label class="selector-card">
+                <input type="checkbox" name="raw_names" value="{{ image.name }}">
+                <img src="/media/datasets/{{ settings.slug }}/raw/{{ image.name }}" alt="{{ image.name }}">
+                <span>{{ image.name }}</span>
+              </label>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="empty">Upload raw images to start curating.</p>
+        {% endif %}
+      </div>
+      <div>
+        <h3>References</h3>
+        {% if references %}
+          <div class="selector-grid">
+            {% for reference in references %}
+              <label class="selector-card">
+                <input type="checkbox" name="reference_names" value="{{ reference.name }}">
+                <img src="/media/datasets/{{ settings.slug }}/references/{{ reference.name }}" alt="{{ reference.name }}">
+                <span>{{ reference.name }}</span>
+              </label>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="empty">Reference images are optional.</p>
+        {% endif %}
+      </div>
+    </div>
+    <button type="submit">Curate with Codex</button>
+  </form>
+</section>
+
+<section class="jobs-panel" data-dataset-slug="{{ settings.slug }}">
+  <div class="jobs-header">
+    <div>
+      <h2>Codex jobs</h2>
+      <p>Live status for curator, generation, imports, labeling, setup, and training.</p>
+    </div>
+  </div>
+  <div id="jobs-list" class="jobs-list"></div>
+</section>
+
+<section class="review">
+  <div class="jobs-header">
+    <div>
+      <h2>Curator candidates</h2>
+      <p>Approve only the candidates you want to add to the trainable dataset.</p>
+    </div>
+    {% if candidates %}
+      <form id="bulk-approve" method="post" action="/datasets/{{ settings.slug }}/curator/candidates/approve-selected" class="bulk-approve">
+        <input name="instruction" placeholder="{% if settings.dataset_type == qwen_dataset_type %}Optional shared edit instruction{% else %}Optional shared caption{% endif %}">
+        <button type="submit" class="secondary">Add selected</button>
+      </form>
+    {% endif %}
+  </div>
+  {% if candidates %}
+    <div class="gallery curator-gallery">
+      {% for candidate in candidates %}
+        <article class="image-card{% if candidate.approved %} approved{% endif %}">
+          <label class="candidate-check">
+            <input form="bulk-approve" type="checkbox" name="candidate_ids" value="{{ candidate.id }}" {% if candidate.approved %}disabled{% endif %}>
+            <span>{% if candidate.approved %}Approved{% else %}Select{% endif %}</span>
+          </label>
+          <img src="/media/datasets/{{ settings.slug }}/curator/{{ candidate.job_id }}/{{ candidate.filename }}" alt="{{ candidate.filename }}">
+          <div class="image-meta">
+            <strong>{{ candidate.filename }}</strong>
+            <span>{{ candidate.job_id }}</span>
+          </div>
+          {% if candidate.raw_filename %}
+            <div class="mini-preview">
+              <img src="/media/datasets/{{ settings.slug }}/raw/{{ candidate.raw_filename }}" alt="{{ candidate.raw_filename }}">
+              <span>Raw: {{ candidate.raw_filename }}</span>
+            </div>
+          {% endif %}
+          {% if candidate.reference_filenames %}
+            <p class="job-stats">References: {{ candidate.reference_filenames | join(", ") }}</p>
+          {% endif %}
+          <form method="post" action="/datasets/{{ settings.slug }}/curator/candidates/{{ candidate.id }}/approve" class="stack">
+            <textarea name="instruction" rows="3" {% if candidate.approved %}disabled{% endif %}>{{ candidate.instruction }}</textarea>
+            <button type="submit" {% if candidate.approved %}disabled{% endif %}>Add to dataset</button>
+          </form>
+        </article>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p class="empty">No curator candidates yet.</p>
+  {% endif %}
+</section>
+
+<script>
+  window.__initialJobs = {{ jobs | tojson }};
+</script>
+<script src="{{ url_for('static', path='/dataset.js') }}"></script>
+{% endblock %}

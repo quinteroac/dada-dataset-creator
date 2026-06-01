@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Datasets · Dada Dataset Creator{% endblock %}
+{% block content %}
+<section class="workspace">
+  <div class="panel">
+    <h1>Create dataset</h1>
+    <form method="post" action="/datasets" class="form-grid">
+      <label>
+        Dataset name
+        <input name="name" placeholder="My edit dataset" required>
+      </label>
+      <label>
+        Type
+        <select name="dataset_type" required>
+          <option value="qwen_image_edit_2511">Qwen Image Edit-2511</option>
+          <option value="anima">Anima</option>
+        </select>
+      </label>
+      <label>
+        Token / fallback instruction
+        <input name="trigger_token" placeholder="Edit the control image as instructed" required>
+      </label>
+      <label>
+        Resolution width
+        <input type="number" name="resolution_width" value="1024" min="16" step="16">
+      </label>
+      <label>
+        Resolution height
+        <input type="number" name="resolution_height" value="1024" min="16" step="16">
+      </label>
+      <label>
+        Batch size
+        <input type="number" name="batch_size" value="1" min="1">
+      </label>
+      <label>
+        Repeats
+        <input type="number" name="num_repeats" value="10" min="1">
+      </label>
+      <label>
+        Min bucket
+        <input type="number" name="min_bucket_reso" value="512" min="16" step="16">
+      </label>
+      <label>
+        Max bucket
+        <input type="number" name="max_bucket_reso" value="1536" min="16" step="16">
+      </label>
+      <label>
+        Bucket step
+        <input type="number" name="bucket_reso_steps" value="16" min="16" step="16">
+      </label>
+      <button type="submit">Create</button>
+    </form>
+  </div>
+
+  <div class="panel">
+    <h2>Existing datasets</h2>
+    {% if datasets %}
+      <div class="dataset-list">
+        {% for dataset in datasets %}
+          <a class="dataset-row" href="/datasets/{{ dataset.slug }}">
+            <strong>{{ dataset.name }}</strong>
+            <span>{{ dataset.slug }} · {{ dataset.dataset_type }}</span>
+          </a>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="empty">No datasets yet.</p>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}
