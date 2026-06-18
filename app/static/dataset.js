@@ -2,12 +2,29 @@ const panel = document.querySelector("[data-dataset-slug]");
 const jobsList = document.querySelector("#jobs-list");
 const initialJobs = window.__initialJobs || [];
 const completedKey = panel ? `dada-completed-jobs-${panel.dataset.datasetSlug}` : "";
-const completedJobs = new Set(JSON.parse(localStorage.getItem(completedKey) || "[]"));
+const completedJobs = new Set(readCompletedJobs());
 const qwenVramPreset = document.querySelector("#qwen-vram-preset");
 const qwenBlocksToSwap = document.querySelector("#qwen-blocks-to-swap");
 const qwenNetworkDim = document.querySelector('input[name="network_dim"]');
 const qwenTrainingBackend = document.querySelector("#qwen-training-backend");
 const modalTrainingOptions = document.querySelector(".modal-training-options");
+const imageSelectionBoxes = [...document.querySelectorAll("[data-image-select]")];
+const selectedImageCount = document.querySelector("[data-selected-image-count]");
+const deleteSelectedImages = document.querySelector("[data-delete-selected-images]");
+const selectAllImages = document.querySelector("[data-select-all-images]");
+const clearImageSelection = document.querySelector("[data-clear-image-selection]");
+const bulkDeleteForm = document.querySelector("#bulk-delete-form");
+
+function readCompletedJobs() {
+  if (!completedKey) return [];
+  try {
+    const value = JSON.parse(localStorage.getItem(completedKey) || "[]");
+    return Array.isArray(value) ? value : [];
+  } catch {
+    localStorage.removeItem(completedKey);
+    return [];
+  }
+}
 
 if (qwenVramPreset && qwenBlocksToSwap && qwenNetworkDim) {
   qwenVramPreset.addEventListener("change", () => {
@@ -25,6 +42,47 @@ function syncTrainingBackendOptions() {
 if (qwenTrainingBackend) {
   qwenTrainingBackend.addEventListener("change", syncTrainingBackendOptions);
   syncTrainingBackendOptions();
+}
+
+function syncImageSelection() {
+  if (!selectedImageCount || !deleteSelectedImages) return;
+  const selected = imageSelectionBoxes.filter((box) => box.checked).length;
+  selectedImageCount.textContent = selected === 1 ? "1 selected" : `${selected} selected`;
+  deleteSelectedImages.disabled = selected === 0;
+}
+
+document.addEventListener("change", (event) => {
+  if (event.target.matches("[data-image-select]")) {
+    syncImageSelection();
+  }
+});
+
+if (selectAllImages) {
+  selectAllImages.addEventListener("click", () => {
+    imageSelectionBoxes.forEach((box) => {
+      box.checked = true;
+    });
+    syncImageSelection();
+  });
+}
+
+if (clearImageSelection) {
+  clearImageSelection.addEventListener("click", () => {
+    imageSelectionBoxes.forEach((box) => {
+      box.checked = false;
+    });
+    syncImageSelection();
+  });
+}
+
+if (bulkDeleteForm) {
+  bulkDeleteForm.addEventListener("submit", (event) => {
+    const selected = imageSelectionBoxes.filter((box) => box.checked).length;
+    if (!selected || !confirm(`Delete ${selected} selected image${selected === 1 ? "" : "s"} from this dataset?`)) {
+      event.preventDefault();
+    }
+  });
+  syncImageSelection();
 }
 
 function statusLabel(status) {

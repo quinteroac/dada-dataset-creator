@@ -117,6 +117,35 @@ def test_fastapi_delete_image(tmp_path: Path) -> None:
         app.dependency_overrides.clear()
 
 
+def test_fastapi_delete_selected_images(tmp_path: Path) -> None:
+    store = DatasetStore(tmp_path / "datasets")
+    settings = store.create_dataset("Bulk Delete Web", "anima", "web_token")
+    generated = []
+    for index in range(3):
+        path = tmp_path / f"generated-{index}.png"
+        path.write_bytes(b"fake")
+        generated.append(path)
+    store.import_generated_images(settings.slug, generated, "")
+
+    app.dependency_overrides[get_store] = lambda: store
+    client = TestClient(app)
+    try:
+        response = client.post(
+            f"/datasets/{settings.slug}/images/delete-selected",
+            data={"stems": ["000001", "000003"]},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        images_dir = tmp_path / "datasets" / settings.slug / "images"
+        assert not (images_dir / "000001.png").exists()
+        assert not (images_dir / "000001.txt").exists()
+        assert not (images_dir / "000001.meta.json").exists()
+        assert (images_dir / "000002.png").exists()
+        assert not (images_dir / "000003.png").exists()
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_fastapi_generate_creates_queued_job(tmp_path: Path) -> None:
     store = DatasetStore(tmp_path / "datasets")
     settings = store.create_dataset("Async Web", "anima", "web_token")
@@ -184,6 +213,13 @@ def test_fastapi_training_creates_queued_job(tmp_path: Path) -> None:
                 "vae": "/models/vae.safetensors",
                 "network_dim": 8,
                 "max_train_epochs": 1,
+                "cache_text_encoder_outputs": "true",
+                "qwen_image_vae_2d": "true",
+                "cuda_allow_tf32": "true",
+                "cuda_cudnn_benchmark": "true",
+                "save_state": "true",
+                "save_state_on_train_end": "true",
+                "resume_state_path": "datasets/train_web/outputs/train_web-state",
             },
             follow_redirects=False,
         )
@@ -191,6 +227,13 @@ def test_fastapi_training_creates_queued_job(tmp_path: Path) -> None:
         job = job_store.list_jobs(settings.slug)[0]
         assert job.type == "train_anima_lora"
         assert job.status == "queued"
+        assert job.payload["cache_text_encoder_outputs"] is True
+        assert job.payload["qwen_image_vae_2d"] is True
+        assert job.payload["cuda_allow_tf32"] is True
+        assert job.payload["cuda_cudnn_benchmark"] is True
+        assert job.payload["save_state"] is True
+        assert job.payload["save_state_on_train_end"] is True
+        assert job.payload["resume_state_path"] == "datasets/train_web/outputs/train_web-state"
         assert runner.enqueued[0].id == job.id
     finally:
         app.dependency_overrides.clear()

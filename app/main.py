@@ -497,12 +497,21 @@ async def train_anima_lora(
     max_train_epochs: int = Form(10),
     save_every_n_epochs: int = Form(1),
     mixed_precision: str = Form("bf16"),
-    vae_chunk_size: int = Form(64),
+    vae_chunk_size: int = Form(0),
     gradient_checkpointing: bool = Form(False),
     cache_latents: bool = Form(False),
     cache_text_encoder_outputs: bool = Form(False),
     vae_disable_cache: bool = Form(False),
+    qwen_image_vae_2d: bool = Form(False),
+    compile: bool = Form(False),
+    compile_mode: str = Form("default"),
+    compile_cache_size_limit: int = Form(32),
+    cuda_allow_tf32: bool = Form(False),
+    cuda_cudnn_benchmark: bool = Form(False),
     train_text_encoder: bool = Form(False),
+    save_state: bool = Form(False),
+    save_state_on_train_end: bool = Form(False),
+    resume_state_path: str = Form(""),
     extra_args: str = Form(""),
     store: DatasetStore = Depends(get_store),
     job_store: JobStore = Depends(get_job_store),
@@ -531,7 +540,16 @@ async def train_anima_lora(
         "cache_latents": cache_latents,
         "cache_text_encoder_outputs": cache_text_encoder_outputs,
         "vae_disable_cache": vae_disable_cache,
+        "qwen_image_vae_2d": qwen_image_vae_2d,
+        "compile": compile,
+        "compile_mode": compile_mode,
+        "compile_cache_size_limit": compile_cache_size_limit,
+        "cuda_allow_tf32": cuda_allow_tf32,
+        "cuda_cudnn_benchmark": cuda_cudnn_benchmark,
         "train_text_encoder": train_text_encoder,
+        "save_state": save_state,
+        "save_state_on_train_end": save_state_on_train_end,
+        "resume_state_path": resume_state_path,
         "extra_args": extra_args,
     }
     job = job_store.create_job(slug, "train_anima_lora", payload)
@@ -642,6 +660,23 @@ async def cancel_job(
         return RedirectResponse(f"/datasets/{slug}?error=Only training jobs can be cancelled", status_code=303)
     await training_runner.cancel(slug, job_id)
     return RedirectResponse(f"/datasets/{slug}?message=Training job cancelled", status_code=303)
+
+
+@app.post("/datasets/{slug}/images/delete-selected")
+async def delete_selected_images(
+    slug: str,
+    stems: list[str] | None = Form(None),
+    store: DatasetStore = Depends(get_store),
+) -> RedirectResponse:
+    selected_stems = list(dict.fromkeys(stems or []))
+    if not selected_stems:
+        return RedirectResponse(f"/datasets/{slug}?error=No images selected", status_code=303)
+    for stem in selected_stems:
+        store.delete_image(slug, stem)
+    return RedirectResponse(
+        f"/datasets/{slug}?message=Deleted {len(selected_stems)} images",
+        status_code=303,
+    )
 
 
 @app.post("/datasets/{slug}/images/{stem}/delete")

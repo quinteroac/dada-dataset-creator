@@ -35,7 +35,43 @@ def test_build_train_command_uses_safe_arg_list_and_preset(tmp_path: Path) -> No
     assert "--dataset_config=" + str((datasets / "blue" / "dataset.toml").resolve()) in command
     assert "--gradient_checkpointing" in command
     assert "--network_train_unet_only" in command
+    assert "--vae_chunk_size=64" not in command
     assert "train_llm_adapter=True" in command
+
+
+def test_build_train_command_uses_updated_anima_speed_flags(tmp_path: Path) -> None:
+    vendor = tmp_path / "vendor"
+    sd_scripts = vendor / "sd-scripts"
+    sd_scripts.mkdir(parents=True)
+    (sd_scripts / "anima_train_network.py").write_text("# script", encoding="utf-8")
+    datasets = tmp_path / "datasets"
+    (datasets / "blue").mkdir(parents=True)
+    (datasets / "blue" / "dataset.toml").write_text("[general]\n", encoding="utf-8")
+    service = TrainingService(vendor_dir=vendor, datasets_root=datasets)
+
+    command = service.build_train_command(
+        "blue",
+        {
+            "pretrained_model_name_or_path": "model",
+            "qwen3": "qwen",
+            "vae": "vae",
+            "cache_text_encoder_outputs": True,
+            "qwen_image_vae_2d": True,
+            "cuda_allow_tf32": True,
+            "cuda_cudnn_benchmark": True,
+            "compile": True,
+            "compile_mode": "default",
+            "compile_cache_size_limit": 32,
+        },
+    )
+
+    assert "--cache_text_encoder_outputs" in command
+    assert "--qwen_image_vae_2d" in command
+    assert "--cuda_allow_tf32" in command
+    assert "--cuda_cudnn_benchmark" in command
+    assert "--compile" in command
+    assert "--compile_mode=default" in command
+    assert "--compile_cache_size_limit=32" in command
 
 
 def test_build_train_command_skips_text_encoder_cache_when_shuffle_caption(tmp_path: Path) -> None:
@@ -84,6 +120,34 @@ def test_build_train_command_can_train_text_encoder_when_requested(tmp_path: Pat
     assert "--network_train_unet_only" not in command
 
 
+def test_build_train_command_can_resume_from_saved_state(tmp_path: Path) -> None:
+    vendor = tmp_path / "vendor"
+    sd_scripts = vendor / "sd-scripts"
+    sd_scripts.mkdir(parents=True)
+    (sd_scripts / "anima_train_network.py").write_text("# script", encoding="utf-8")
+    datasets = tmp_path / "datasets"
+    (datasets / "blue").mkdir(parents=True)
+    (datasets / "blue" / "dataset.toml").write_text("[general]\n", encoding="utf-8")
+    resume_state = datasets / "blue" / "outputs" / "blue-state"
+    service = TrainingService(vendor_dir=vendor, datasets_root=datasets)
+
+    command = service.build_train_command(
+        "blue",
+        {
+            "pretrained_model_name_or_path": "model",
+            "qwen3": "qwen",
+            "vae": "vae",
+            "save_state": True,
+            "save_state_on_train_end": True,
+            "resume_state_path": str(resume_state),
+        },
+    )
+
+    assert "--save_state" in command
+    assert "--save_state_on_train_end" in command
+    assert f"--resume={resume_state}" in command
+
+
 def test_setup_command_targets_vendor_sd_scripts(tmp_path: Path) -> None:
     service = TrainingService(vendor_dir=tmp_path / "vendor")
 
@@ -91,6 +155,15 @@ def test_setup_command_targets_vendor_sd_scripts(tmp_path: Path) -> None:
 
     assert command[:3] == ["git", "clone", "--depth"]
     assert command[-1].endswith("vendor/sd-scripts")
+
+
+def test_update_sd_scripts_command_pulls_existing_checkout(tmp_path: Path) -> None:
+    service = TrainingService(vendor_dir=tmp_path / "vendor")
+
+    command = service.update_sd_scripts_command()
+
+    assert command[:3] == ["git", "-C", str(tmp_path / "vendor" / "sd-scripts")]
+    assert command[-2:] == ["--ff-only", "--tags"]
 
 
 def test_build_qwen_commands_use_musubi_and_vram_defaults(tmp_path: Path) -> None:

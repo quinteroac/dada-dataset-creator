@@ -133,7 +133,7 @@ The integration uses your local `codex` CLI session and loads the SDK dynamicall
 
 From the dataset page, you can launch two job types:
 
-- `setup_sd_scripts`: clones `kohya-ss/sd-scripts` into `vendor/sd-scripts`.
+- `setup_sd_scripts`: clones `kohya-ss/sd-scripts` into `vendor/sd-scripts`, or updates the existing checkout with a fast-forward pull.
 - `train_anima_lora`: runs `accelerate launch anima_train_network.py` with the dataset's `dataset.toml`.
 
 Logs appear in the jobs panel. Output defaults to:
@@ -141,6 +141,10 @@ Logs appear in the jobs panel. Output defaults to:
 ```text
 datasets/<dataset_slug>/outputs
 ```
+
+To resume an interrupted Anima run, enable `save training state` before starting the original training. After interruption, start a new Anima training job with `Resume state path` pointing to the saved state directory from the output folder. The app passes this to `sd-scripts` as `--resume=<path>`.
+
+The Anima form defaults to the current lower-VRAM path: latent caching, text encoder output caching, the 2D Qwen-Image VAE (`--qwen_image_vae_2d`), TF32, and cuDNN benchmark. `torch.compile` is exposed but off by default because it requires a compatible PyTorch/Triton environment; when enabled, the app uses `--compile_mode=default` and `--compile_cache_size_limit=32`.
 
 The app does not automatically install PyTorch or GPU dependencies for `sd-scripts`. Install those dependencies in the same environment used to launch FastAPI.
 

@@ -37,6 +37,9 @@ class TrainingService:
     def setup_command(self) -> list[str]:
         return ["git", "clone", "--depth", "1", SD_SCRIPTS_REPO, str(self.sd_scripts_dir)]
 
+    def update_sd_scripts_command(self) -> list[str]:
+        return ["git", "-C", str(self.sd_scripts_dir), "pull", "--ff-only", "--tags"]
+
     def setup_musubi_command(self) -> list[str]:
         return ["git", "clone", "--depth", "1", MUSUBI_TUNER_REPO, str(self.musubi_tuner_dir)]
 
@@ -50,14 +53,20 @@ class TrainingService:
     ) -> ProcessResult:
         self.vendor_dir.mkdir(parents=True, exist_ok=True)
         if self.sd_scripts_ready():
-            on_line(f"[setup] sd-scripts already exists at {self.sd_scripts_dir}")
-            return ProcessResult(return_code=0, output_path=str(self.sd_scripts_dir))
-        result = await self.run_process(
-            self.setup_command(),
-            cwd=Path("."),
-            on_line=on_line,
-            on_process_start=on_process_start,
-        )
+            on_line(f"[setup] updating existing sd-scripts at {self.sd_scripts_dir}")
+            result = await self.run_process(
+                self.update_sd_scripts_command(),
+                cwd=Path("."),
+                on_line=on_line,
+                on_process_start=on_process_start,
+            )
+        else:
+            result = await self.run_process(
+                self.setup_command(),
+                cwd=Path("."),
+                on_line=on_line,
+                on_process_start=on_process_start,
+            )
         if result.return_code == 0 and not self.sd_scripts_ready():
             raise RuntimeError("git clone finished but anima_train_network.py was not found")
         result.output_path = str(self.sd_scripts_dir)
@@ -123,8 +132,10 @@ class TrainingService:
             f"--max_train_epochs={payload.get('max_train_epochs', 10)}",
             f"--save_every_n_epochs={payload.get('save_every_n_epochs', 1)}",
             f"--mixed_precision={payload.get('mixed_precision', 'bf16')}",
-            f"--vae_chunk_size={payload.get('vae_chunk_size', 64)}",
         ]
+        vae_chunk_size = int(payload.get("vae_chunk_size", 0) or 0)
+        if vae_chunk_size > 0:
+            command.append(f"--vae_chunk_size={vae_chunk_size}")
         optional_paths = {
             "llm_adapter_path": "--llm_adapter_path",
             "t5_tokenizer_path": "--t5_tokenizer_path",
@@ -136,6 +147,25 @@ class TrainingService:
         for flag in ["gradient_checkpointing", "cache_latents", "vae_disable_cache"]:
             if payload.get(flag):
                 command.append(f"--{flag}")
+        for flag in ["qwen_image_vae_2d", "compile", "cuda_allow_tf32", "cuda_cudnn_benchmark"]:
+            if payload.get(flag):
+                command.append(f"--{flag}")
+        if payload.get("compile"):
+            compile_mode = str(payload.get("compile_mode", "default")).strip()
+            compile_cache_size_limit = int(payload.get("compile_cache_size_limit", 32) or 0)
+            if compile_mode:
+                command.append(f"--compile_mode={compile_mode}")
+            if compile_cache_size_limit > 0:
+                command.append(f"--compile_cache_size_limit={compile_cache_size_limit}")
+        for flag in ["save_state", "save_state_on_train_end"]:
+            if payload.get(flag):
+                command.append(f"--{flag}")
+        resume_state_path = str(payload.get("resume_state_path", "")).strip()
+        if resume_state_path:
+            resume_path = Path(resume_state_path).expanduser()
+            if not resume_path.is_absolute():
+                resume_path = resume_path.resolve()
+            command.append(f"--resume={resume_path}")
         if not payload.get("train_text_encoder", False):
             command.append("--network_train_unet_only")
         if payload.get("cache_text_encoder_outputs") and not self._dataset_uses_shuffle_caption(dataset_config):

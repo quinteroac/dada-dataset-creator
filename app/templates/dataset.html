@@ -102,7 +102,7 @@
       <textarea name="prompt" rows="5" required placeholder="{% if settings.dataset_type == qwen_dataset_type %}Describe the edit-pair domain and variations{% else %}Prompt base for Codex image generation{% endif %}"></textarea>
       <label>
         Count
-        <input type="number" name="count" value="1" min="1" max="12">
+        <input type="number" name="count" value="1" min="1" max="50">
       </label>
       <button type="submit">{% if settings.dataset_type == qwen_dataset_type %}Generate edit pairs with Codex{% else %}Generate with Codex{% endif %}</button>
     </form>
@@ -113,7 +113,7 @@
       </label>
       <label>
         Limit
-        <input type="number" name="limit" value="12" min="1" max="48">
+        <input type="number" name="limit" value="12" min="1" max="50">
       </label>
       <button type="submit" class="secondary">Import recent Codex images</button>
     </form>
@@ -322,14 +322,48 @@
     </label>
     <label>
       VAE chunk size
-      <input type="number" name="vae_chunk_size" value="64" min="1">
+      <input type="number" name="vae_chunk_size" value="0" min="0">
+    </label>
+    <label>
+      Compile mode
+      <select name="compile_mode">
+        <option value="default">default</option>
+        <option value="reduce-overhead">reduce-overhead</option>
+        <option value="max-autotune">max-autotune</option>
+        <option value="max-autotune-no-cudagraphs">max-autotune-no-cudagraphs</option>
+      </select>
+    </label>
+    <label>
+      Compile cache limit
+      <input type="number" name="compile_cache_size_limit" value="32" min="0">
+    </label>
+    <label>
+      Resume state path
+      <input name="resume_state_path" placeholder="datasets/{{ settings.slug }}/outputs/...-state">
     </label>
     <div class="toggle-row">
+      <input type="hidden" name="gradient_checkpointing" value="false">
+      <input type="hidden" name="cache_latents" value="false">
+      <input type="hidden" name="cache_text_encoder_outputs" value="false">
+      <input type="hidden" name="qwen_image_vae_2d" value="false">
+      <input type="hidden" name="vae_disable_cache" value="false">
+      <input type="hidden" name="cuda_allow_tf32" value="false">
+      <input type="hidden" name="cuda_cudnn_benchmark" value="false">
+      <input type="hidden" name="compile" value="false">
+      <input type="hidden" name="train_text_encoder" value="false">
+      <input type="hidden" name="save_state" value="false">
+      <input type="hidden" name="save_state_on_train_end" value="false">
       <label><input type="checkbox" name="gradient_checkpointing" value="true" checked> gradient checkpointing</label>
       <label><input type="checkbox" name="cache_latents" value="true" checked> cache latents</label>
-      <label><input type="checkbox" name="cache_text_encoder_outputs" value="true"> cache text outputs</label>
-      <label><input type="checkbox" name="vae_disable_cache" value="true" checked> disable VAE cache</label>
+      <label><input type="checkbox" name="cache_text_encoder_outputs" value="true" checked> cache text outputs</label>
+      <label><input type="checkbox" name="qwen_image_vae_2d" value="true" checked> 2D Qwen VAE</label>
+      <label><input type="checkbox" name="vae_disable_cache" value="true"> disable VAE cache</label>
+      <label><input type="checkbox" name="cuda_allow_tf32" value="true" checked> allow TF32</label>
+      <label><input type="checkbox" name="cuda_cudnn_benchmark" value="true" checked> cuDNN benchmark</label>
+      <label><input type="checkbox" name="compile" value="true"> torch.compile</label>
       <label><input type="checkbox" name="train_text_encoder" value="true"> train text encoder</label>
+      <label><input type="checkbox" name="save_state" value="true"> save training state</label>
+      <label><input type="checkbox" name="save_state_on_train_end" value="true"> save final state</label>
     </div>
     <label class="wide">
       Extra args
@@ -358,11 +392,26 @@
 </section>
 
 <section class="review">
-  <h2>Review and captions</h2>
+  <div class="review-header">
+    <h2>Review and captions</h2>
+    {% if images %}
+      <div class="bulk-delete-actions">
+        <form id="bulk-delete-form" method="post" action="/datasets/{{ settings.slug }}/images/delete-selected"></form>
+        <button type="button" class="secondary" data-select-all-images>Select all</button>
+        <button type="button" class="secondary" data-clear-image-selection>Clear</button>
+        <span data-selected-image-count>0 selected</span>
+        <button type="submit" form="bulk-delete-form" class="danger" data-delete-selected-images disabled>Delete selected</button>
+      </div>
+    {% endif %}
+  </div>
   {% if images %}
     <div class="gallery{% if settings.dataset_type == qwen_dataset_type %} edit-pair-gallery{% endif %}">
       {% for image in images %}
         <article class="image-card">
+          <label class="image-select">
+            <input type="checkbox" name="stems" value="{{ image.stem }}" form="bulk-delete-form" data-image-select>
+            <span>Select {{ image.filename }}</span>
+          </label>
           {% if settings.dataset_type == qwen_dataset_type %}
             <div class="pair-preview">
               {% if image.control_exists %}
@@ -404,5 +453,5 @@
 <script>
   window.__initialJobs = {{ jobs | tojson }};
 </script>
-<script src="{{ url_for('static', path='/dataset.js') }}"></script>
+<script src="{{ url_for('static', path='/dataset.js') }}?v=2"></script>
 {% endblock %}

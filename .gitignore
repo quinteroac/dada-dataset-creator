@@ -21,6 +21,7 @@ env/
 # Generated/local data
 datasets/
 generated_images/
+downloads/
 
 # Vendored external repositories
 vendor/

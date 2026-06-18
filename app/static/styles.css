@@ -196,6 +196,38 @@ button.danger {
   flex-wrap: wrap;
 }
 
+.review-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+
+.review-header h2 {
+  margin: 0;
+}
+
+.bulk-delete-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.bulk-delete-actions span {
+  min-width: 86px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .notice {
   margin: 0 0 18px;
   padding: 12px 14px;
@@ -389,6 +421,7 @@ pre {
 .image-card {
   display: grid;
   gap: 12px;
+  align-content: start;
 }
 
 .image-card.approved {
@@ -397,11 +430,34 @@ pre {
 
 .image-card img {
   width: 100%;
-  aspect-ratio: 1;
-  object-fit: cover;
+  height: auto;
+  display: block;
   border-radius: 6px;
   border: 1px solid var(--line);
   background: #f1f4f2;
+}
+
+.pair-preview img {
+  max-height: 360px;
+  object-fit: contain;
+}
+
+.image-select {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  color: var(--ink);
+}
+
+.image-select input {
+  width: auto;
+}
+
+.image-select span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .image-meta {
