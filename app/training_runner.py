@@ -10,7 +10,14 @@ from app.storage import DatasetStore
 from app.training_service import TrainingService
 
 
-TRAINING_JOB_TYPES = {"setup_sd_scripts", "setup_musubi_tuner", "train_anima_lora", "train_qwen_edit_lora"}
+TRAINING_JOB_TYPES = {
+    "setup_sd_scripts",
+    "setup_musubi_tuner",
+    "setup_ai_toolkit",
+    "train_anima_lora",
+    "train_qwen_edit_lora",
+    "train_ideogram4_lora",
+}
 
 
 class TrainingJobRunner:
@@ -74,10 +81,14 @@ class TrainingJobRunner:
                 await self._run_setup(job, service)
             elif job.type == "setup_musubi_tuner":
                 await self._run_setup_musubi(job, service)
+            elif job.type == "setup_ai_toolkit":
+                await self._run_setup_ai_toolkit(job, service)
             elif job.type == "train_anima_lora":
                 await self._run_training(job, service)
             elif job.type == "train_qwen_edit_lora":
                 await self._run_qwen_training(job, service)
+            elif job.type == "train_ideogram4_lora":
+                await self._run_ideogram4_training(job, service)
             else:
                 raise ValueError(f"Unsupported training job type: {job.type}")
         except Exception as exc:
@@ -121,6 +132,25 @@ class TrainingJobRunner:
             output_path=result.output_path,
             return_code=result.return_code,
         )
+
+    async def _run_setup_ai_toolkit(self, job: CodexJob, service: TrainingService) -> None:
+        command = service.setup_ai_toolkit_command()
+        self.job_store.update_job(job.dataset_slug, job.id, command=command)
+        result = await service.setup_ai_toolkit(
+            lambda line: self.job_store.append_log(job.dataset_slug, job.id, line),
+            lambda process: self._set_process(job, process),
+        )
+        if result.return_code != 0:
+            self.job_store.mark_error(job.dataset_slug, job.id, f"setup failed with exit code {result.return_code}")
+            return
+        self.job_store.mark_success(
+            job.dataset_slug,
+            job.id,
+            "AI Toolkit ready",
+            output_path=result.output_path,
+            return_code=result.return_code,
+        )
+
     async def _run_training(self, job: CodexJob, service: TrainingService) -> None:
         self.dataset_store.write_dataset_toml(self.dataset_store.load_settings(job.dataset_slug))
         command = service.build_train_command(job.dataset_slug, job.payload)
@@ -179,6 +209,32 @@ class TrainingJobRunner:
             job.dataset_slug,
             job.id,
             "Qwen Edit-2511 LoRA training finished",
+            output_path=result.output_path,
+            return_code=result.return_code,
+        )
+
+    async def _run_ideogram4_training(self, job: CodexJob, service: TrainingService) -> None:
+        self.dataset_store.write_dataset_toml(self.dataset_store.load_settings(job.dataset_slug))
+        command = service.build_ideogram4_train_command(job.dataset_slug, job.payload)
+        self.job_store.update_job(job.dataset_slug, job.id, command=command)
+        result = await service.train_ideogram4_lora(
+            job.dataset_slug,
+            job.payload,
+            lambda line: self.job_store.append_log(job.dataset_slug, job.id, line),
+            lambda process: self._set_process(job, process),
+        )
+        if result.return_code != 0:
+            self.job_store.mark_error(
+                job.dataset_slug,
+                job.id,
+                f"Ideogram4 training failed with exit code {result.return_code}",
+            )
+            self.job_store.update_job(job.dataset_slug, job.id, return_code=result.return_code)
+            return
+        self.job_store.mark_success(
+            job.dataset_slug,
+            job.id,
+            "Ideogram4 LoRA training finished",
             output_path=result.output_path,
             return_code=result.return_code,
         )

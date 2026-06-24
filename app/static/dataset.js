@@ -122,7 +122,14 @@ function renderJobs(jobs) {
     const commandOpen = openDetails.has(commandKey) ? "open" : "";
     const outputOpen = openDetails.has(outputKey) || job.status === "running" ? "open" : "";
     const command = job.command && job.command.length ? `<details data-detail-key="${commandKey}" ${commandOpen}><summary>Command</summary><pre>${escapeHtml(job.command.join(" "))}</pre></details>` : "";
-    const cancellable = ["train_anima_lora", "train_qwen_edit_lora", "setup_musubi_tuner", "setup_sd_scripts"].includes(job.type);
+    const cancellable = [
+      "train_anima_lora",
+      "train_qwen_edit_lora",
+      "train_ideogram4_lora",
+      "setup_musubi_tuner",
+      "setup_sd_scripts",
+      "setup_ai_toolkit",
+    ].includes(job.type);
     const cancel = cancellable && job.status === "running"
       ? `<form method="post" action="/datasets/${panel.dataset.datasetSlug}/jobs/${job.id}/cancel"><button type="submit" class="danger">Cancel training</button></form>`
       : "";

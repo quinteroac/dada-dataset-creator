@@ -16,7 +16,7 @@ from app.jobs import JobStore
 from app.storage import DatasetNotFoundError, DatasetStore
 from app.training_runner import TrainingJobRunner
 from app.training_service import TrainingService
-from app.models import DATASET_TYPE_QWEN_IMAGE_EDIT_2511
+from app.models import DATASET_TYPE_IDEOGRAM4, DATASET_TYPE_QWEN_IMAGE_EDIT_2511
 
 
 @asynccontextmanager
@@ -135,7 +135,9 @@ async def dataset_detail(
             "jobs": [job.to_json() for job in job_store.list_jobs(slug)],
             "training_ready": get_training_service().sd_scripts_ready(),
             "musubi_ready": get_training_service().musubi_tuner_ready(),
+            "ai_toolkit_ready": get_training_service().ai_toolkit_ready(),
             "qwen_dataset_type": DATASET_TYPE_QWEN_IMAGE_EDIT_2511,
+            "ideogram4_dataset_type": DATASET_TYPE_IDEOGRAM4,
             "message": message,
             "error": error,
         },
@@ -165,6 +167,7 @@ async def dataset_curator(
             "candidates": store.list_curator_candidates(slug),
             "jobs": [job.to_json() for job in job_store.list_jobs(slug)],
             "qwen_dataset_type": DATASET_TYPE_QWEN_IMAGE_EDIT_2511,
+            "ideogram4_dataset_type": DATASET_TYPE_IDEOGRAM4,
             "message": message,
             "error": error,
         },
@@ -415,8 +418,11 @@ async def update_caption(
     description: str = Form(""),
     store: DatasetStore = Depends(get_store),
 ) -> RedirectResponse:
-    store.update_caption(slug, stem, caption, description)
-    return RedirectResponse(f"/datasets/{slug}?message=Caption saved", status_code=303)
+    try:
+        store.update_caption(slug, stem, caption, description)
+        return RedirectResponse(f"/datasets/{slug}?message=Caption saved", status_code=303)
+    except ValueError as exc:
+        return RedirectResponse(f"/datasets/{slug}?error={str(exc)}", status_code=303)
 
 
 @app.post("/datasets/{slug}/images/{stem}/label")
@@ -446,10 +452,30 @@ async def label_batch(
     runner: CodexJobRunner = Depends(get_runner),
 ) -> RedirectResponse:
     settings = store.load_settings(slug)
-    stems = [record.stem for record in store.list_images(slug) if record.caption.strip() == settings.trigger_token]
+    if settings.dataset_type == DATASET_TYPE_IDEOGRAM4:
+        stems = [
+            record.stem
+            for record in store.list_images(slug)
+            if _needs_ideogram4_caption(record.caption, settings.trigger_token)
+        ]
+    else:
+        stems = [record.stem for record in store.list_images(slug) if record.caption.strip() == settings.trigger_token]
     job = job_store.create_job(slug, "label_batch", {"stems": stems})
     runner.enqueue(job)
     return RedirectResponse(f"/datasets/{slug}?message=Codex batch label job queued", status_code=303)
+
+
+def _needs_ideogram4_caption(caption: str, fallback: str) -> bool:
+    stripped = caption.strip()
+    if not stripped or stripped == fallback:
+        return True
+    try:
+        import json
+
+        data = json.loads(stripped)
+    except ValueError:
+        return True
+    return not isinstance(data, dict) or not data.get("high_level_description")
 
 
 @app.post("/datasets/{slug}/setup-sd-scripts")
@@ -476,6 +502,21 @@ async def setup_musubi_tuner(
     job = job_store.create_job(slug, "setup_musubi_tuner", {})
     training_runner.enqueue(job)
     return RedirectResponse(f"/datasets/{slug}?message=musubi-tuner setup job queued", status_code=303)
+
+
+@app.post("/datasets/{slug}/setup-ai-toolkit")
+async def setup_ai_toolkit(
+    slug: str,
+    store: DatasetStore = Depends(get_store),
+    job_store: JobStore = Depends(get_job_store),
+    training_runner: TrainingJobRunner = Depends(get_training_runner),
+) -> RedirectResponse:
+    settings = store.load_settings(slug)
+    if settings.dataset_type != DATASET_TYPE_IDEOGRAM4:
+        return RedirectResponse(f"/datasets/{slug}?error=This dataset is not Ideogram4", status_code=303)
+    job = job_store.create_job(slug, "setup_ai_toolkit", {})
+    training_runner.enqueue(job)
+    return RedirectResponse(f"/datasets/{slug}?message=AI Toolkit setup job queued", status_code=303)
 
 
 @app.post("/datasets/{slug}/train")
@@ -626,6 +667,63 @@ async def train_qwen_edit_lora(
     return RedirectResponse(f"/datasets/{slug}?message=Qwen Edit training job queued", status_code=303)
 
 
+@app.post("/datasets/{slug}/train-ideogram4")
+async def train_ideogram4_lora(
+    slug: str,
+    model_path: str = Form(...),
+    output_name: str = Form(""),
+    output_dir: str = Form(""),
+    network_dim: int = Form(16),
+    network_alpha: int = Form(16),
+    steps: int = Form(1000),
+    learning_rate: str = Form("1e-4"),
+    optimizer: str = Form("adamw8bit"),
+    batch_size: int = Form(1),
+    resolution_list: str = Form("512,768,1024"),
+    dtype: str = Form("bf16"),
+    save_every: int = Form(250),
+    gradient_checkpointing: bool = Form(True),
+    quantize: bool = Form(True),
+    quantize_te: bool = Form(True),
+    low_vram: bool = Form(True),
+    layer_offloading: bool = Form(True),
+    layer_offloading_text_encoder_percent: int = Form(95),
+    layer_offloading_transformer_percent: int = Form(95),
+    extra_args: str = Form(""),
+    store: DatasetStore = Depends(get_store),
+    job_store: JobStore = Depends(get_job_store),
+    training_runner: TrainingJobRunner = Depends(get_training_runner),
+) -> RedirectResponse:
+    settings = store.load_settings(slug)
+    if settings.dataset_type != DATASET_TYPE_IDEOGRAM4:
+        return RedirectResponse(f"/datasets/{slug}?error=This dataset is not Ideogram4", status_code=303)
+    payload = {
+        "model_path": model_path,
+        "output_name": output_name or f"{slug}_ideogram4_lora",
+        "output_dir": output_dir or str((Path("datasets") / slug / "outputs").resolve()),
+        "network_dim": network_dim,
+        "network_alpha": network_alpha,
+        "steps": steps,
+        "learning_rate": learning_rate,
+        "optimizer": optimizer,
+        "batch_size": batch_size,
+        "resolution_list": resolution_list,
+        "dtype": dtype,
+        "save_every": save_every,
+        "gradient_checkpointing": gradient_checkpointing,
+        "quantize": quantize,
+        "quantize_te": quantize_te,
+        "low_vram": low_vram,
+        "layer_offloading": layer_offloading,
+        "layer_offloading_text_encoder_percent": layer_offloading_text_encoder_percent,
+        "layer_offloading_transformer_percent": layer_offloading_transformer_percent,
+        "extra_args": extra_args,
+    }
+    job = job_store.create_job(slug, "train_ideogram4_lora", payload)
+    training_runner.enqueue(job)
+    return RedirectResponse(f"/datasets/{slug}?message=Ideogram4 training job queued", status_code=303)
+
+
 @app.get("/datasets/{slug}/jobs")
 async def list_jobs(
     slug: str,
@@ -656,7 +754,14 @@ async def cancel_job(
     training_runner: TrainingJobRunner = Depends(get_training_runner),
 ) -> RedirectResponse:
     job = job_store.get_job(slug, job_id)
-    if job.type not in {"train_anima_lora", "train_qwen_edit_lora", "setup_musubi_tuner", "setup_sd_scripts"}:
+    if job.type not in {
+        "train_anima_lora",
+        "train_qwen_edit_lora",
+        "train_ideogram4_lora",
+        "setup_musubi_tuner",
+        "setup_sd_scripts",
+        "setup_ai_toolkit",
+    }:
         return RedirectResponse(f"/datasets/{slug}?error=Only training jobs can be cancelled", status_code=303)
     await training_runner.cancel(slug, job_id)
     return RedirectResponse(f"/datasets/{slug}?message=Training job cancelled", status_code=303)

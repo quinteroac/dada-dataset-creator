@@ -2,6 +2,9 @@ import asyncio
 import json
 from types import SimpleNamespace
 
+import pytest
+
+from app.codex_service import CodexUnavailableError
 from app.codex_service import CodexEditPair
 from app.codex_service import CodexClientService
 
@@ -140,3 +143,48 @@ def test_parse_edit_pairs_accepts_confirmed_control_edit(tmp_path) -> None:
     pairs = service._parse_edit_pairs(raw, [control, target], "fallback")
 
     assert pairs == [CodexEditPair(control, target, "make it blue")]
+
+
+def test_parse_ideogram4_caption_accepts_valid_json() -> None:
+    service = CodexClientService()
+    raw = json.dumps(
+        {
+            "high_level_description": "A product poster.",
+            "style_description": {
+                "aesthetics": "minimal",
+                "lighting": "studio",
+                "medium": "digital render",
+                "color_palette": ["#ffffff"],
+            },
+            "compositional_deconstruction": {
+                "background": "plain background",
+                "elements": [{"type": "obj", "bbox": [1, 2, 100, 200], "desc": "product"}],
+            },
+        }
+    )
+
+    caption = service._parse_ideogram4_caption(raw, 1024, 1024)
+
+    assert caption.high_level_description == "A product poster."
+    assert caption.elements[0]["bbox"] == [1, 2, 100, 200]
+    assert json.loads(caption.caption_json)["style_description"]["aesthetics"] == "minimal"
+
+
+def test_parse_ideogram4_caption_extracts_json_and_clamps_bboxes() -> None:
+    service = CodexClientService()
+    raw = """
+    Here is the JSON:
+    {"high_level_description":"A scene.","style_description":{},"compositional_deconstruction":{"background":"","elements":[{"type":"obj","bbox":[-10,5,1200,2000],"desc":"subject"}]}}
+    """
+
+    caption = service._parse_ideogram4_caption(raw, 1024, 768)
+
+    assert caption.elements[0]["bbox"] == [0, 5, 1024, 768]
+    assert caption.bbox_resolution == (1024, 768)
+
+
+def test_parse_ideogram4_caption_rejects_missing_required_fields() -> None:
+    service = CodexClientService()
+
+    with pytest.raises(CodexUnavailableError):
+        service._parse_ideogram4_caption('{"style_description":{},"compositional_deconstruction":{"elements":[]}}')

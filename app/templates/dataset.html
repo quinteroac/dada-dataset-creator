@@ -232,6 +232,102 @@
     <button type="submit">Start Qwen Edit training</button>
   </form>
 </section>
+{% elif settings.dataset_type == ideogram4_dataset_type %}
+<section class="training-panel">
+  <div class="jobs-header">
+    <div>
+      <h2>Ideogram4 Training</h2>
+      <p>Train an Ideogram 4 LoRA with Ostris AI Toolkit.</p>
+    </div>
+    <form method="post" action="/datasets/{{ settings.slug }}/setup-ai-toolkit">
+      <button type="submit" class="secondary">
+        {% if ai_toolkit_ready %}Check AI Toolkit{% else %}Setup AI Toolkit{% endif %}
+      </button>
+    </form>
+  </div>
+  <form method="post" action="/datasets/{{ settings.slug }}/train-ideogram4" class="training-grid">
+    <label>
+      Ideogram4 model path
+      <input name="model_path" placeholder="/models/ideogram-4-fp8" required>
+    </label>
+    <label>
+      Output name
+      <input name="output_name" value="{{ settings.slug }}_ideogram4_lora">
+    </label>
+    <label>
+      Output dir
+      <input name="output_dir" value="datasets/{{ settings.slug }}/outputs">
+    </label>
+    <label>
+      Network rank
+      <input type="number" name="network_dim" value="16" min="1">
+    </label>
+    <label>
+      Network alpha
+      <input type="number" name="network_alpha" value="16" min="1">
+    </label>
+    <label>
+      Steps
+      <input type="number" name="steps" value="1000" min="1">
+    </label>
+    <label>
+      Learning rate
+      <input name="learning_rate" value="1e-4">
+    </label>
+    <label>
+      Optimizer
+      <input name="optimizer" value="adamw8bit">
+    </label>
+    <label>
+      Batch size
+      <input type="number" name="batch_size" value="1" min="1">
+    </label>
+    <label>
+      Resolution list
+      <input name="resolution_list" value="512,768,1024">
+    </label>
+    <label>
+      Dtype
+      <select name="dtype">
+        <option value="bf16">bf16</option>
+        <option value="fp16">fp16</option>
+      </select>
+    </label>
+    <label>
+      Save every steps
+      <input type="number" name="save_every" value="250" min="1">
+    </label>
+    <label>
+      TE offload %
+      <input type="number" name="layer_offloading_text_encoder_percent" value="95" min="0" max="100">
+    </label>
+    <label>
+      Transformer offload %
+      <input type="number" name="layer_offloading_transformer_percent" value="95" min="0" max="100">
+    </label>
+    <div class="toggle-row">
+      <input type="hidden" name="gradient_checkpointing" value="false">
+      <input type="hidden" name="quantize" value="false">
+      <input type="hidden" name="quantize_te" value="false">
+      <input type="hidden" name="low_vram" value="false">
+      <input type="hidden" name="layer_offloading" value="false">
+      <label><input type="checkbox" name="gradient_checkpointing" value="true" checked> gradient checkpointing</label>
+      <label><input type="checkbox" name="quantize" value="true" checked> quantize</label>
+      <label><input type="checkbox" name="quantize_te" value="true" checked> quantize text encoder</label>
+      <label><input type="checkbox" name="low_vram" value="true" checked> low VRAM</label>
+      <label><input type="checkbox" name="layer_offloading" value="true" checked> layer offloading</label>
+    </div>
+    <label class="wide">
+      Extra args
+      <textarea name="extra_args" rows="3" placeholder="--some-ai-toolkit-flag"></textarea>
+    </label>
+    <div class="wide command-preview">
+      <strong>Command preview</strong>
+      <code>python run.py datasets/{{ settings.slug }}/ideogram4_training_config.yaml</code>
+    </div>
+    <button type="submit">Start Ideogram4 training</button>
+  </form>
+</section>
 {% else %}
 <section class="training-panel">
   <div class="jobs-header">
@@ -385,7 +481,7 @@
       <p>Live status for generation, imports, labeling, setup, and training.</p>
     </div>
     <form method="post" action="/datasets/{{ settings.slug }}/label-batch">
-      <button type="submit" class="secondary">{% if settings.dataset_type == qwen_dataset_type %}Write missing instructions{% else %}Label uncaptained images{% endif %}</button>
+      <button type="submit" class="secondary">{% if settings.dataset_type == qwen_dataset_type %}Write missing instructions{% elif settings.dataset_type == ideogram4_dataset_type %}Caption JSON with Codex{% else %}Label uncaptained images{% endif %}</button>
     </form>
   </div>
   <div id="jobs-list" class="jobs-list"></div>
@@ -433,12 +529,12 @@
             <span>{{ image.source_type }}</span>
           </div>
           <form method="post" action="/datasets/{{ settings.slug }}/images/{{ image.stem }}/caption" class="stack">
-            <textarea name="caption" rows="4">{{ image.caption }}</textarea>
-            <textarea name="description" rows="3" placeholder="{% if settings.dataset_type == qwen_dataset_type %}Edit instruction notes{% else %}Long description{% endif %}">{{ image.description }}</textarea>
-            <button type="submit">Save {% if settings.dataset_type == qwen_dataset_type %}instruction{% else %}caption{% endif %}</button>
+            <textarea name="caption" rows="{% if settings.dataset_type == ideogram4_dataset_type %}10{% else %}4{% endif %}" placeholder="{% if settings.dataset_type == ideogram4_dataset_type %}{&quot;high_level_description&quot;:&quot;...&quot;,&quot;style_description&quot;:{...},&quot;compositional_deconstruction&quot;:{...}}{% endif %}">{{ image.caption }}</textarea>
+            <textarea name="description" rows="3" placeholder="{% if settings.dataset_type == qwen_dataset_type %}Edit instruction notes{% elif settings.dataset_type == ideogram4_dataset_type %}High-level description notes{% else %}Long description{% endif %}">{{ image.description }}</textarea>
+            <button type="submit">Save {% if settings.dataset_type == qwen_dataset_type %}instruction{% elif settings.dataset_type == ideogram4_dataset_type %}JSON caption{% else %}caption{% endif %}</button>
           </form>
           <form method="post" action="/datasets/{{ settings.slug }}/images/{{ image.stem }}/label">
-            <button type="submit" class="secondary">{% if settings.dataset_type == qwen_dataset_type %}Write instruction with Codex{% else %}Label with Codex{% endif %}</button>
+            <button type="submit" class="secondary">{% if settings.dataset_type == qwen_dataset_type %}Write instruction with Codex{% elif settings.dataset_type == ideogram4_dataset_type %}Caption JSON with Codex{% else %}Label with Codex{% endif %}</button>
           </form>
           <form method="post" action="/datasets/{{ settings.slug }}/images/{{ image.stem }}/delete" onsubmit="return confirm('Delete {{ image.filename }} from this dataset?');">
             <button type="submit" class="danger">Delete image</button>

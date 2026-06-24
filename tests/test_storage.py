@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 from app.storage import DatasetStore
 
@@ -83,6 +84,43 @@ def test_qwen_edit_dataset_writes_musubi_toml_and_imports_pairs(tmp_path: Path) 
     store.delete_image(settings.slug, "000001")
 
     assert not (dataset_dir / "controls" / "000001.png").exists()
+
+
+def test_ideogram4_dataset_preserves_json_caption_and_metadata(tmp_path: Path) -> None:
+    store = DatasetStore(tmp_path / "datasets")
+    settings = store.create_dataset("Ideogram", "ideogram4", "fallback token")
+    source = tmp_path / "source.png"
+    source.write_bytes(b"fake image")
+
+    record = store.import_generated_images(settings.slug, [source], "poster prompt")[0]
+
+    dataset_dir = tmp_path / "datasets" / settings.slug
+    assert record.caption == "fallback_token"
+    assert (dataset_dir / "images" / "000001.txt").read_text().strip() == "fallback_token"
+    assert 'folder_path = "' in (dataset_dir / "dataset.toml").read_text(encoding="utf-8")
+
+    caption = {
+        "high_level_description": "A poster with a red chair.",
+        "style_description": {
+            "aesthetics": "clean editorial",
+            "lighting": "soft studio",
+            "medium": "digital design",
+            "color_palette": ["#ff0000"],
+        },
+        "compositional_deconstruction": {
+            "background": "white studio",
+            "elements": [{"type": "obj", "bbox": [10, 20, 500, 700], "desc": "red chair"}],
+        },
+    }
+    updated = store.update_caption(settings.slug, "000001", json.dumps(caption), "")
+
+    stored = json.loads((dataset_dir / "images" / "000001.txt").read_text())
+    meta = json.loads((dataset_dir / "images" / "000001.meta.json").read_text())
+    assert stored["high_level_description"] == "A poster with a red chair."
+    assert updated.description == "A poster with a red chair."
+    assert meta["caption_format"] == "ideogram4_json"
+    assert meta["ideogram4_elements"] == caption["compositional_deconstruction"]["elements"]
+    assert meta["ideogram4_bbox_resolution"] == [1024, 1024]
 
 
 def test_curator_raw_references_and_anima_approval(tmp_path: Path) -> None:

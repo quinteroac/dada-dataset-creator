@@ -13,6 +13,7 @@ from app.lora_utils import create_dit_only_lora
 
 SD_SCRIPTS_REPO = "https://github.com/kohya-ss/sd-scripts.git"
 MUSUBI_TUNER_REPO = "https://github.com/kohya-ss/musubi-tuner.git"
+AI_TOOLKIT_REPO = "https://github.com/ostris/ai-toolkit.git"
 
 
 @dataclass(slots=True)
@@ -27,12 +28,16 @@ class TrainingService:
         self.datasets_root = datasets_root
         self.sd_scripts_dir = self.vendor_dir / "sd-scripts"
         self.musubi_tuner_dir = self.vendor_dir / "musubi-tuner"
+        self.ai_toolkit_dir = self.vendor_dir / "ai-toolkit"
 
     def sd_scripts_ready(self) -> bool:
         return (self.sd_scripts_dir / "anima_train_network.py").exists()
 
     def musubi_tuner_ready(self) -> bool:
         return (self.musubi_tuner_dir / "src" / "musubi_tuner" / "qwen_image_train_network.py").exists()
+
+    def ai_toolkit_ready(self) -> bool:
+        return (self.ai_toolkit_dir / "run.py").exists()
 
     def setup_command(self) -> list[str]:
         return ["git", "clone", "--depth", "1", SD_SCRIPTS_REPO, str(self.sd_scripts_dir)]
@@ -45,6 +50,12 @@ class TrainingService:
 
     def setup_musubi_install_command(self) -> list[str]:
         return ["uv", "pip", "install", "-e", str(self.musubi_tuner_dir)]
+
+    def setup_ai_toolkit_command(self) -> list[str]:
+        return ["git", "clone", "--depth", "1", AI_TOOLKIT_REPO, str(self.ai_toolkit_dir)]
+
+    def setup_ai_toolkit_install_command(self) -> list[str]:
+        return ["uv", "pip", "install", "-r", str(self.ai_toolkit_dir / "requirements.txt")]
 
     async def setup_sd_scripts(
         self,
@@ -99,6 +110,35 @@ class TrainingService:
             on_process_start=on_process_start,
         )
         install_result.output_path = str(self.musubi_tuner_dir)
+        return install_result
+
+    async def setup_ai_toolkit(
+        self,
+        on_line: Callable[[str], None],
+        on_process_start: Callable[[asyncio.subprocess.Process], None] | None = None,
+    ) -> ProcessResult:
+        self.vendor_dir.mkdir(parents=True, exist_ok=True)
+        if self.ai_toolkit_ready():
+            on_line(f"[setup] ai-toolkit already exists at {self.ai_toolkit_dir}")
+        else:
+            result = await self.run_process(
+                self.setup_ai_toolkit_command(),
+                cwd=Path("."),
+                on_line=on_line,
+                on_process_start=on_process_start,
+            )
+            if result.return_code != 0:
+                result.output_path = str(self.ai_toolkit_dir)
+                return result
+            if not self.ai_toolkit_ready():
+                raise RuntimeError("git clone finished but ai-toolkit run.py was not found")
+        install_result = await self.run_process(
+            self.setup_ai_toolkit_install_command(),
+            cwd=Path("."),
+            on_line=on_line,
+            on_process_start=on_process_start,
+        )
+        install_result.output_path = str(self.ai_toolkit_dir)
         return install_result
 
     def build_train_command(self, dataset_slug: str, payload: dict[str, object]) -> list[str]:
@@ -288,6 +328,88 @@ class TrainingService:
         )
         return command
 
+    def build_ideogram4_config(self, dataset_slug: str, payload: dict[str, object]) -> str:
+        dataset_dir = (self.datasets_root / dataset_slug).resolve()
+        output_dir = Path(str(payload.get("output_dir") or dataset_dir / "outputs")).expanduser()
+        if not output_dir.is_absolute():
+            output_dir = output_dir.resolve()
+        resolution_values = str(payload.get("resolution_list", "512,768,1024")).strip() or "512,768,1024"
+        resolutions = [
+            int(value.strip())
+            for value in resolution_values.replace("[", "").replace("]", "").split(",")
+            if value.strip()
+        ]
+        if not resolutions:
+            resolutions = [1024]
+        bool_value = lambda key, default=True: "true" if payload.get(key, default) else "false"
+        return "\n".join(
+            [
+                "---",
+                "job: extension",
+                "config:",
+                f"  name: \"{payload.get('output_name') or dataset_slug + '_ideogram4_lora'}\"",
+                "  process:",
+                "    - type: 'sd_trainer'",
+                f"      training_folder: \"{output_dir}\"",
+                "      device: cuda:0",
+                "      network:",
+                "        type: \"lora\"",
+                f"        linear: {int(payload.get('network_dim', 16) or 16)}",
+                f"        linear_alpha: {int(payload.get('network_alpha', payload.get('network_dim', 16)) or 16)}",
+                "      save:",
+                "        dtype: float16",
+                f"        save_every: {int(payload.get('save_every', 250) or 250)}",
+                "        max_step_saves_to_keep: 2",
+                "        push_to_hub: false",
+                "      datasets:",
+                f"        - folder_path: \"{dataset_dir / 'images'}\"",
+                "          caption_ext: \"txt\"",
+                "          caption_dropout_rate: 0.0",
+                "          shuffle_tokens: false",
+                "          cache_latents_to_disk: true",
+                f"          resolution: [ {', '.join(str(value) for value in resolutions)} ]",
+                "      train:",
+                f"        batch_size: {int(payload.get('batch_size', 1) or 1)}",
+                f"        steps: {int(payload.get('steps', 1000) or 1000)}",
+                "        gradient_accumulation_steps: 1",
+                "        train_unet: true",
+                "        train_text_encoder: false",
+                f"        gradient_checkpointing: {bool_value('gradient_checkpointing', True)}",
+                "        noise_scheduler: \"flowmatch\"",
+                f"        optimizer: \"{payload.get('optimizer', 'adamw8bit')}\"",
+                f"        lr: {payload.get('learning_rate', '1e-4')}",
+                "        ema_config:",
+                "          use_ema: true",
+                "          ema_decay: 0.99",
+                f"        dtype: {payload.get('dtype', 'bf16')}",
+                "      model:",
+                f"        name_or_path: \"{payload['model_path']}\"",
+                "        arch: ideogram4",
+                f"        quantize: {bool_value('quantize', True)}",
+                f"        quantize_te: {bool_value('quantize_te', True)}",
+                f"        low_vram: {bool_value('low_vram', True)}",
+                f"        layer_offloading: {bool_value('layer_offloading', True)}",
+                f"        layer_offloading_text_encoder_percent: {int(payload.get('layer_offloading_text_encoder_percent', 95) or 95)}",
+                f"        layer_offloading_transformer_percent: {int(payload.get('layer_offloading_transformer_percent', 95) or 95)}",
+                "",
+            ]
+        )
+
+    def write_ideogram4_config(self, dataset_slug: str, payload: dict[str, object]) -> Path:
+        dataset_dir = self.datasets_root / dataset_slug
+        config_path = dataset_dir / "ideogram4_training_config.yaml"
+        config_path.write_text(self.build_ideogram4_config(dataset_slug, payload), encoding="utf-8")
+        return config_path
+
+    def build_ideogram4_train_command(self, dataset_slug: str, payload: dict[str, object]) -> list[str]:
+        self._require_ai_toolkit_ready()
+        config_path = self.write_ideogram4_config(dataset_slug, payload).resolve()
+        command = ["python", "run.py", str(config_path)]
+        extra_args = str(payload.get("extra_args", "")).strip()
+        if extra_args:
+            command.extend(shlex.split(extra_args))
+        return command
+
     async def train_anima_lora(
         self,
         dataset_slug: str,
@@ -399,6 +521,35 @@ class TrainingService:
         result.output_path = f"modal://{volume_name}{output_dir.removeprefix('/data')}"
         return result
 
+    async def train_ideogram4_lora(
+        self,
+        dataset_slug: str,
+        payload: dict[str, object],
+        on_line: Callable[[str], None],
+        on_process_start: Callable[[asyncio.subprocess.Process], None] | None = None,
+    ) -> ProcessResult:
+        self._require_ai_toolkit_ready()
+        dataset_dir = self.datasets_root / dataset_slug
+        output_dir = Path(str(payload.get("output_dir") or dataset_dir / "outputs")).expanduser()
+        if not output_dir.is_absolute():
+            output_dir = output_dir.resolve()
+        output_dir.mkdir(parents=True, exist_ok=True)
+        command = self.build_ideogram4_train_command(dataset_slug, payload)
+        (dataset_dir / "ideogram4_training_payload.json").write_text(
+            json.dumps(payload | {"command": command}, indent=2),
+            encoding="utf-8",
+        )
+        on_line("[ideogram4] " + shlex.join(command))
+        result = await self.run_process(
+            command,
+            cwd=self.ai_toolkit_dir,
+            on_line=on_line,
+            on_process_start=on_process_start,
+        )
+        safetensors = sorted(output_dir.glob("**/*.safetensors"), key=lambda path: path.stat().st_mtime, reverse=True)
+        result.output_path = str(safetensors[0] if safetensors else output_dir)
+        return result
+
     def _qwen_modal_payload(self, payload: dict[str, object]) -> dict[str, object]:
         modal_payload = dict(payload)
         if payload.get("modal_bake_models", True):
@@ -450,6 +601,12 @@ class TrainingService:
             raise FileNotFoundError(
                 f"{self.musubi_tuner_dir / 'src' / 'musubi_tuner' / 'qwen_image_train_network.py'} not found. "
                 "Run setup musubi-tuner first."
+            )
+
+    def _require_ai_toolkit_ready(self) -> None:
+        if not self.ai_toolkit_ready():
+            raise FileNotFoundError(
+                f"{self.ai_toolkit_dir / 'run.py'} not found. Run setup AI Toolkit first."
             )
 
     def _validate_qwen_training_models(self, payload: dict[str, object]) -> None:

@@ -1,9 +1,10 @@
 # Dada Dataset Creator
 
-Local FastAPI app for creating, curating, captioning, exporting, and training LoRA datasets. It is designed around two workflows:
+Local FastAPI app for creating, curating, captioning, exporting, and training LoRA datasets. It is designed around three workflows:
 
 - **Anima LoRA**, compatible with `kohya-ss/sd-scripts` and `anima_train_network.py`.
 - **Qwen Image Edit-2511 LoRA**, compatible with `kohya-ss/musubi-tuner`.
+- **Ideogram4 LoRA**, compatible with `ostris/ai-toolkit`.
 
 The app works fully locally for image uploads, manual caption editing, and dataset export. Codex image generation can also be used to create synthetic datasets from prompts and references. Codex, training, and Modal features are optional.
 
@@ -31,6 +32,7 @@ Open http://127.0.0.1:8000 on this machine, or `http://<your-machine-ip>:8000` f
 2. Choose the dataset type:
    - `Anima`: images with tag-style captions.
    - `Qwen Image Edit-2511`: control/target pairs with edit instructions.
+   - `Ideogram4`: images with structured JSON captions and estimated bboxes.
 3. Upload images or edit pairs.
 4. Optionally use Codex image generation to create synthetic training images or Qwen edit pairs.
 5. Edit captions manually, or use Codex to generate captions.
@@ -80,6 +82,24 @@ datasets/
     outputs/
 ```
 
+Ideogram4 dataset:
+
+```text
+datasets/
+  my_ideogram_dataset/
+    settings.json
+    dataset.toml
+    ideogram4_training_config.yaml
+    images/
+      000001.png
+      000001.txt
+      000001.meta.json
+    references/
+    raw/
+    curator/
+    outputs/
+```
+
 `dataset.toml` is regenerated when settings change and before training or export.
 
 ## Curator
@@ -116,7 +136,7 @@ Available features:
 - Generate synthetic images for Anima datasets from prompts and optional reference images.
 - Generate synthetic control/target edit pairs for Qwen Image Edit-2511.
 - Import recent images from `~/.codex/generated_images`.
-- Caption a single image or a batch.
+- Caption a single image or a batch, including Ideogram4 JSON captions with estimated bboxes.
 - Curate raw images using references.
 
 This makes it possible to build fully synthetic datasets: describe the target concept, generate candidate images or edit pairs with Codex imagegen, import them into the dataset, then caption, curate, export, or train from the same UI.
@@ -180,6 +200,17 @@ Notes:
 - Use bf16 checkpoints for `dit` and `text_encoder`.
 - Do not use fp8 checkpoints as base files; use the `fp8_base`, `fp8_scaled`, and `fp8_vl` flags for VRAM savings.
 - The default preset uses `blocks_to_swap=36`.
+
+## Ideogram4 Training
+
+For Ideogram4, the app uses `ostris/ai-toolkit`.
+
+From the dataset page:
+
+- `setup_ai_toolkit`: clones `ostris/ai-toolkit` into `vendor/ai-toolkit` and installs `requirements.txt`.
+- `train_ideogram4_lora`: writes `ideogram4_training_config.yaml` and runs `python run.py <config>`.
+
+Ideogram4 captions are saved as JSON in each image's `.txt` file. Codex captioning produces `high_level_description`, `style_description`, and `compositional_deconstruction.elements` with estimated `[x1, y1, x2, y2]` bboxes normalized to the dataset resolution.
 
 ## Qwen Training on Modal
 

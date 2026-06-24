@@ -266,3 +266,49 @@ def test_setup_musubi_installs_when_repo_already_exists(tmp_path: Path) -> None:
 
     assert result.return_code == 0
     assert service.commands == [service.setup_musubi_install_command()]
+
+
+def test_setup_ai_toolkit_command_targets_vendor_ai_toolkit(tmp_path: Path) -> None:
+    service = TrainingService(vendor_dir=tmp_path / "vendor")
+
+    command = service.setup_ai_toolkit_command()
+    install = service.setup_ai_toolkit_install_command()
+
+    assert command[:3] == ["git", "clone", "--depth"]
+    assert command[-1].endswith("vendor/ai-toolkit")
+    assert install[:4] == ["uv", "pip", "install", "-r"]
+    assert install[-1].endswith("vendor/ai-toolkit/requirements.txt")
+
+
+def test_build_ideogram4_training_config_and_command(tmp_path: Path) -> None:
+    vendor = tmp_path / "vendor"
+    ai_toolkit = vendor / "ai-toolkit"
+    ai_toolkit.mkdir(parents=True)
+    (ai_toolkit / "run.py").write_text("# script", encoding="utf-8")
+    datasets = tmp_path / "datasets"
+    (datasets / "ideo" / "images").mkdir(parents=True)
+    service = TrainingService(vendor_dir=vendor, datasets_root=datasets)
+    payload = {
+        "model_path": "/models/ideogram-4-fp8",
+        "output_name": "ideo_lora",
+        "network_dim": 32,
+        "network_alpha": 16,
+        "quantize": True,
+        "quantize_te": True,
+        "low_vram": True,
+        "layer_offloading": True,
+    }
+
+    command = service.build_ideogram4_train_command("ideo", payload)
+    config = (datasets / "ideo" / "ideogram4_training_config.yaml").read_text(encoding="utf-8")
+
+    assert command[:2] == ["python", "run.py"]
+    assert command[2].endswith("ideogram4_training_config.yaml")
+    assert "arch: ideogram4" in config
+    assert 'type: "lora"' in config
+    assert "linear: 32" in config
+    assert "linear_alpha: 16" in config
+    assert "quantize: true" in config
+    assert "quantize_te: true" in config
+    assert "low_vram: true" in config
+    assert "layer_offloading: true" in config

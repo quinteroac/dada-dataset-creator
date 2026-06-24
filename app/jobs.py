@@ -19,8 +19,10 @@ JobType = Literal[
     "curate_raw_images",
     "setup_sd_scripts",
     "setup_musubi_tuner",
+    "setup_ai_toolkit",
     "train_anima_lora",
     "train_qwen_edit_lora",
+    "train_ideogram4_lora",
     "cancel_training",
 ]
 

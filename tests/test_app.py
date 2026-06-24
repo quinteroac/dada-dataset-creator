@@ -298,6 +298,64 @@ def test_fastapi_qwen_routes_create_jobs(tmp_path: Path) -> None:
         app.dependency_overrides.clear()
 
 
+def test_fastapi_ideogram4_routes_create_jobs(tmp_path: Path) -> None:
+    store = DatasetStore(tmp_path / "datasets")
+    job_store = JobStore(tmp_path / "datasets")
+    runner = NoopRunner()
+    training_runner = NoopTrainingRunner()
+
+    app.dependency_overrides[get_store] = lambda: store
+    app.dependency_overrides[get_job_store] = lambda: job_store
+    app.dependency_overrides[get_runner] = lambda: runner
+    app.dependency_overrides[get_training_runner] = lambda: training_runner
+    client = TestClient(app)
+    try:
+        create = client.post(
+            "/datasets",
+            data={
+                "name": "Ideogram Web",
+                "dataset_type": "ideogram4",
+                "trigger_token": "fallback caption",
+                "resolution_width": 1024,
+                "resolution_height": 1024,
+                "batch_size": 1,
+                "num_repeats": 10,
+                "min_bucket_reso": 512,
+                "max_bucket_reso": 1536,
+                "bucket_reso_steps": 16,
+            },
+            follow_redirects=False,
+        )
+        assert create.status_code == 303
+        assert create.headers["location"] == "/datasets/ideogram_web"
+
+        upload = client.post(
+            "/datasets/ideogram_web/upload",
+            files={"files": ("sample.png", b"fake image", "image/png")},
+            follow_redirects=False,
+        )
+        label = client.post("/datasets/ideogram_web/images/000001/label", follow_redirects=False)
+        setup = client.post("/datasets/ideogram_web/setup-ai-toolkit", follow_redirects=False)
+        train = client.post(
+            "/datasets/ideogram_web/train-ideogram4",
+            data={"model_path": "/models/ideogram-4-fp8"},
+            follow_redirects=False,
+        )
+
+        assert upload.status_code == 303
+        assert label.status_code == 303
+        assert setup.status_code == 303
+        assert train.status_code == 303
+        types = [job.type for job in job_store.list_jobs("ideogram_web")]
+        assert "label_image" in types
+        assert "setup_ai_toolkit" in types
+        assert "train_ideogram4_lora" in types
+        assert runner.enqueued[0].type == "label_image"
+        assert training_runner.enqueued[-1].type == "train_ideogram4_lora"
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_fastapi_qwen_generate_edit_pairs_uses_fallback_prompt(tmp_path: Path) -> None:
     store = DatasetStore(tmp_path / "datasets")
     settings = store.create_dataset("Qwen Web", "qwen_image_edit_2511", "Edit portraits into watercolor")

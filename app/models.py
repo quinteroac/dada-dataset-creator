@@ -8,6 +8,7 @@ from typing import Any
 
 SUPPORTED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 DATASET_TYPE_QWEN_IMAGE_EDIT_2511 = "qwen_image_edit_2511"
+DATASET_TYPE_IDEOGRAM4 = "ideogram4"
 
 
 @dataclass(slots=True)
@@ -76,6 +77,7 @@ class ImageRecord:
     description: str = ""
     source_type: str = "uploaded"
     source_prompt: str = ""
+    caption_format: str = ""
 
     @property
     def filename(self) -> str:

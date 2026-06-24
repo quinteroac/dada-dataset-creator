@@ -5,8 +5,9 @@ import os
 from pathlib import Path
 from typing import Callable, Protocol
 
-from app.codex_service import CodexClientService, CodexEditPair, CodexLabel
+from app.codex_service import CodexClientService, CodexEditPair, CodexIdeogram4Caption, CodexLabel
 from app.jobs import CodexJob, JobStore
+from app.models import DATASET_TYPE_IDEOGRAM4, DATASET_TYPE_QWEN_IMAGE_EDIT_2511
 from app.storage import DatasetStore
 
 
@@ -52,6 +53,14 @@ class RunnerCodexService(Protocol):
         target_path: Path,
         on_event: Callable[[str], None],
     ) -> str: ...
+
+    async def label_ideogram4_image_stream(
+        self,
+        image_path: Path,
+        width: int,
+        height: int,
+        on_event: Callable[[str], None],
+    ) -> CodexIdeogram4Caption: ...
 
     async def curate_raw_images_stream(
         self,
@@ -178,7 +187,7 @@ class CodexJobRunner:
         settings = self.dataset_store.load_settings(job.dataset_slug)
         record = next(record for record in self.dataset_store.list_images(job.dataset_slug) if record.stem == stem)
         image_path = record.image_path
-        if settings.dataset_type == "qwen_image_edit_2511":
+        if settings.dataset_type == DATASET_TYPE_QWEN_IMAGE_EDIT_2511:
             control_path = record.control_path
             if control_path is None:
                 raise FileNotFoundError(f"control image for {stem}")
@@ -188,6 +197,14 @@ class CodexJobRunner:
                 lambda line: self.job_store.append_log(job.dataset_slug, job.id, line),
             )
             self.dataset_store.update_caption(job.dataset_slug, stem, instruction, instruction)
+        elif settings.dataset_type == DATASET_TYPE_IDEOGRAM4:
+            caption = await codex.label_ideogram4_image_stream(
+                image_path,
+                settings.resolution_width,
+                settings.resolution_height,
+                lambda line: self.job_store.append_log(job.dataset_slug, job.id, line),
+            )
+            self.dataset_store.apply_ideogram4_caption(job.dataset_slug, stem, caption.caption_json)
         else:
             label = await codex.label_image_stream(
                 image_path,
@@ -203,7 +220,7 @@ class CodexJobRunner:
         labeled = 0
         for stem in stems:
             record = next(record for record in self.dataset_store.list_images(job.dataset_slug) if record.stem == stem)
-            if settings.dataset_type == "qwen_image_edit_2511":
+            if settings.dataset_type == DATASET_TYPE_QWEN_IMAGE_EDIT_2511:
                 if record.control_path is None:
                     raise FileNotFoundError(f"control image for {stem}")
                 instruction = await codex.label_edit_pair_stream(
@@ -214,6 +231,16 @@ class CodexJobRunner:
                     ),
                 )
                 self.dataset_store.update_caption(job.dataset_slug, stem, instruction, instruction)
+            elif settings.dataset_type == DATASET_TYPE_IDEOGRAM4:
+                caption = await codex.label_ideogram4_image_stream(
+                    record.image_path,
+                    settings.resolution_width,
+                    settings.resolution_height,
+                    lambda line, current_stem=stem: self.job_store.append_log(
+                        job.dataset_slug, job.id, f"[{current_stem}] {line}"
+                    ),
+                )
+                self.dataset_store.apply_ideogram4_caption(job.dataset_slug, stem, caption.caption_json)
             else:
                 label = await codex.label_image_stream(
                     record.image_path,

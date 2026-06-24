@@ -4,10 +4,12 @@ import json
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from fastapi import UploadFile
 
 from app.models import (
+    DATASET_TYPE_IDEOGRAM4,
     DATASET_TYPE_QWEN_IMAGE_EDIT_2511,
     CuratorCandidate,
     DatasetSettings,
@@ -407,14 +409,25 @@ class DatasetStore:
     ) -> ImageRecord:
         settings = self.load_settings(slug)
         image_path = self._image_path_for_stem(slug, stem)
+        ideogram4_elements = None
+        ideogram4_bbox_resolution = None
+        if settings.dataset_type == DATASET_TYPE_IDEOGRAM4:
+            parsed_description, ideogram4_elements, ideogram4_bbox_resolution = self._ideogram4_meta_from_caption(
+                caption,
+                settings.resolution_width,
+                settings.resolution_height,
+            )
+            description = description or parsed_description
         return self._write_caption_and_meta(
             settings,
             image_path,
             caption=caption,
             description=description,
-            source_type=self._read_meta(image_path).get("source_type", "uploaded"),
+            source_type=str(self._read_meta(image_path).get("source_type", "uploaded")),
             source_prompt=str(self._read_meta(image_path).get("source_prompt", "")),
             control_path=self._control_path_for_stem(slug, stem),
+            ideogram4_elements=ideogram4_elements,
+            ideogram4_bbox_resolution=ideogram4_bbox_resolution,
         )
 
     def apply_label(
@@ -436,6 +449,32 @@ class DatasetStore:
             source_type=str(meta.get("source_type", "uploaded")),
             source_prompt=str(meta.get("source_prompt", "")),
             control_path=self._control_path_for_stem(slug, stem),
+        )
+
+    def apply_ideogram4_caption(
+        self,
+        slug: str,
+        stem: str,
+        caption_json: str,
+    ) -> ImageRecord:
+        settings = self.load_settings(slug)
+        image_path = self._image_path_for_stem(slug, stem)
+        meta = self._read_meta(image_path)
+        description, elements, bbox_resolution = self._ideogram4_meta_from_caption(
+            caption_json,
+            settings.resolution_width,
+            settings.resolution_height,
+        )
+        return self._write_caption_and_meta(
+            settings,
+            image_path,
+            caption=caption_json,
+            description=description,
+            source_type=str(meta.get("source_type", "uploaded")),
+            source_prompt=str(meta.get("source_prompt", "")),
+            control_path=self._control_path_for_stem(slug, stem),
+            ideogram4_elements=elements,
+            ideogram4_bbox_resolution=bbox_resolution,
         )
 
     def delete_image(self, slug: str, stem: str) -> None:
@@ -536,9 +575,22 @@ class DatasetStore:
         source_type: str,
         source_prompt: str,
         control_path: Path | None = None,
+        ideogram4_elements: list[dict[str, Any]] | None = None,
+        ideogram4_bbox_resolution: tuple[int, int] | None = None,
     ) -> ImageRecord:
         if settings.dataset_type == DATASET_TYPE_QWEN_IMAGE_EDIT_2511:
             normalized = caption.strip() or settings.trigger_token
+        elif settings.dataset_type == DATASET_TYPE_IDEOGRAM4:
+            normalized = caption.strip() or settings.trigger_token
+            parsed_description, parsed_elements, parsed_resolution = self._ideogram4_meta_from_caption(
+                normalized,
+                settings.resolution_width,
+                settings.resolution_height,
+                allow_fallback=True,
+            )
+            description = description or parsed_description
+            ideogram4_elements = ideogram4_elements if ideogram4_elements is not None else parsed_elements
+            ideogram4_bbox_resolution = ideogram4_bbox_resolution or parsed_resolution
         else:
             normalized = normalize_caption(settings.trigger_token, caption)
         caption_path = image_path.with_suffix(".txt")
@@ -557,6 +609,19 @@ class DatasetStore:
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
         )
+        if settings.dataset_type == DATASET_TYPE_IDEOGRAM4:
+            meta.update(
+                {
+                    "caption_format": "ideogram4_json",
+                    "ideogram4_elements": ideogram4_elements or [],
+                    "ideogram4_bbox_resolution": list(
+                        ideogram4_bbox_resolution
+                        or (settings.resolution_width, settings.resolution_height)
+                    ),
+                    "tags": [],
+                    "edit_instruction": "",
+                }
+            )
         meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
         return ImageRecord(
             stem=image_path.stem,
@@ -568,6 +633,7 @@ class DatasetStore:
             description=description,
             source_type=source_type,
             source_prompt=source_prompt,
+            caption_format=str(meta.get("caption_format", "")),
         )
 
     def _read_image_record(self, settings: DatasetSettings, image_path: Path) -> ImageRecord:
@@ -580,11 +646,37 @@ class DatasetStore:
             caption_path=caption_path,
             meta_path=image_path.with_suffix(".meta.json"),
             control_path=self._control_path_for_stem(settings.slug, image_path.stem),
-            caption=caption if settings.dataset_type == DATASET_TYPE_QWEN_IMAGE_EDIT_2511 else normalize_caption(settings.trigger_token, caption),
+            caption=caption if settings.dataset_type in {DATASET_TYPE_QWEN_IMAGE_EDIT_2511, DATASET_TYPE_IDEOGRAM4} else normalize_caption(settings.trigger_token, caption),
             description=str(meta.get("description", "")),
             source_type=str(meta.get("source_type", "uploaded")),
             source_prompt=str(meta.get("source_prompt", "")),
+            caption_format=str(meta.get("caption_format", "")),
         )
+
+    def _ideogram4_meta_from_caption(
+        self,
+        caption: str,
+        width: int,
+        height: int,
+        allow_fallback: bool = False,
+    ) -> tuple[str, list[dict[str, Any]], tuple[int, int]]:
+        try:
+            data = json.loads(caption)
+        except json.JSONDecodeError:
+            if allow_fallback:
+                return "", [], (width, height)
+            raise ValueError("Ideogram4 captions must be valid JSON") from None
+        if not isinstance(data, dict):
+            if allow_fallback:
+                return "", [], (width, height)
+            raise ValueError("Ideogram4 captions must be JSON objects")
+        description = str(data.get("high_level_description", "")).strip()
+        composition = data.get("compositional_deconstruction", {})
+        raw_elements = composition.get("elements", []) if isinstance(composition, dict) else []
+        elements = [element for element in raw_elements if isinstance(element, dict)]
+        if not allow_fallback and (not description or not elements):
+            raise ValueError("Ideogram4 captions require high_level_description and elements")
+        return description, elements, (width, height)
 
     def _read_meta(self, image_path: Path) -> dict[str, object]:
         meta_path = image_path.with_suffix(".meta.json")

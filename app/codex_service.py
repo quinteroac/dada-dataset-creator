@@ -23,6 +23,14 @@ class CodexEditPair:
     instruction: str
 
 
+@dataclass(slots=True)
+class CodexIdeogram4Caption:
+    caption_json: str
+    high_level_description: str
+    elements: list[dict[str, Any]]
+    bbox_resolution: tuple[int, int]
+
+
 class CodexUnavailableError(RuntimeError):
     pass
 
@@ -140,6 +148,27 @@ class CodexClientService:
         )
         raw = await self._run_codex_request_stream(sdk, request, [control_path, target_path], on_event)
         return raw.strip().strip('"') or "Edit the control image to match the target image."
+
+    async def label_ideogram4_image_stream(
+        self,
+        image_path: Path,
+        width: int,
+        height: int,
+        on_event: Callable[[str], None],
+    ) -> CodexIdeogram4Caption:
+        sdk = self._load_sdk()
+        request = (
+            "Caption this image for Ideogram 4 LoRA training. Return only valid JSON, no markdown and no commentary. "
+            "The JSON must use this schema: high_level_description string; style_description object with "
+            "aesthetics, lighting, medium, and color_palette; compositional_deconstruction object with background "
+            "and elements. elements must be a non-empty array of objects with type, bbox, and desc. "
+            f"Estimate bbox coordinates as integer [x1, y1, x2, y2] in a {width}x{height} training canvas. "
+            "Include bboxes for main subjects, visible text, important objects, and important composition regions. "
+            "Clamp bboxes inside the canvas, keep x1 < x2 and y1 < y2, and describe every element clearly. "
+            "Use English descriptions."
+        )
+        raw = await self._run_codex_request_stream(sdk, request, [image_path], on_event)
+        return self._parse_ideogram4_caption(raw, width, height)
 
     def _load_sdk(self) -> Any:
         try:
@@ -308,6 +337,92 @@ class CodexClientService:
             tags = [tag for tag in tags if tag != trigger_token]
             tags.insert(0, trigger_token)
         return CodexLabel(tags=tags, description=str(data.get("description", "")))
+
+    def _parse_ideogram4_caption(self, raw: str, width: int = 1024, height: int = 1024) -> CodexIdeogram4Caption:
+        data = self._extract_json_object(raw)
+        high_level = str(data.get("high_level_description", "")).strip()
+        if not high_level:
+            raise CodexUnavailableError("Codex did not return high_level_description for Ideogram4.")
+
+        style = data.get("style_description")
+        if not isinstance(style, dict):
+            style = {}
+        palette = style.get("color_palette", [])
+        if not isinstance(palette, list):
+            palette = []
+        clean_style = {
+            "aesthetics": str(style.get("aesthetics", "")).strip(),
+            "lighting": str(style.get("lighting", "")).strip(),
+            "medium": str(style.get("medium", "")).strip(),
+            "color_palette": [str(color).strip() for color in palette if str(color).strip()],
+        }
+
+        composition = data.get("compositional_deconstruction")
+        if not isinstance(composition, dict):
+            composition = {}
+        raw_elements = composition.get("elements", [])
+        if not isinstance(raw_elements, list) or not raw_elements:
+            raise CodexUnavailableError("Codex did not return Ideogram4 compositional elements.")
+        elements = []
+        for item in raw_elements:
+            if not isinstance(item, dict):
+                continue
+            desc = str(item.get("desc", "")).strip()
+            bbox = self._clamp_bbox(item.get("bbox"), width, height)
+            if not desc or bbox is None:
+                continue
+            elements.append(
+                {
+                    "type": str(item.get("type", "obj")).strip() or "obj",
+                    "bbox": bbox,
+                    "desc": desc,
+                }
+            )
+        if not elements:
+            raise CodexUnavailableError("Codex did not return valid Ideogram4 bboxes.")
+
+        clean = {
+            "high_level_description": high_level,
+            "style_description": clean_style,
+            "compositional_deconstruction": {
+                "background": str(composition.get("background", "")).strip(),
+                "elements": elements,
+            },
+        }
+        return CodexIdeogram4Caption(
+            caption_json=json.dumps(clean, indent=2, ensure_ascii=False),
+            high_level_description=high_level,
+            elements=elements,
+            bbox_resolution=(width, height),
+        )
+
+    def _extract_json_object(self, raw: str) -> dict[str, Any]:
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            start = raw.find("{")
+            end = raw.rfind("}")
+            if start == -1 or end == -1:
+                raise CodexUnavailableError("Codex did not return JSON.")
+            data = json.loads(raw[start : end + 1])
+        if not isinstance(data, dict):
+            raise CodexUnavailableError("Codex JSON response must be an object.")
+        return data
+
+    def _clamp_bbox(self, value: Any, width: int, height: int) -> list[int] | None:
+        if not isinstance(value, list | tuple) or len(value) != 4:
+            return None
+        try:
+            x1, y1, x2, y2 = [int(round(float(part))) for part in value]
+        except (TypeError, ValueError):
+            return None
+        x1 = max(0, min(width, x1))
+        x2 = max(0, min(width, x2))
+        y1 = max(0, min(height, y1))
+        y2 = max(0, min(height, y2))
+        if x1 >= x2 or y1 >= y2:
+            return None
+        return [x1, y1, x2, y2]
 
     def _parse_edit_pairs(self, raw: str, generated: list[Path], fallback_instruction: str) -> list[CodexEditPair]:
         path_by_name = {path.name: path for path in generated}

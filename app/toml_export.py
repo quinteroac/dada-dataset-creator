@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.models import DATASET_TYPE_QWEN_IMAGE_EDIT_2511, DatasetSettings
+from app.models import DATASET_TYPE_IDEOGRAM4, DATASET_TYPE_QWEN_IMAGE_EDIT_2511, DatasetSettings
 
 
 def render_dataset_toml(
@@ -12,6 +12,19 @@ def render_dataset_toml(
     cache_dir: Path | None = None,
 ) -> str:
     rendered_image_dir = str(image_dir.resolve()) if image_dir is not None else "./images"
+    if settings.dataset_type == DATASET_TYPE_IDEOGRAM4:
+        return "\n".join(
+            [
+                "[[datasets]]",
+                f'folder_path = "{rendered_image_dir}"',
+                'caption_ext = "txt"',
+                f"resolution = [{settings.resolution_width}, {settings.resolution_height}]",
+                f"batch_size = {settings.batch_size}",
+                f"num_repeats = {settings.num_repeats}",
+                "",
+            ]
+        )
+
     if settings.dataset_type == DATASET_TYPE_QWEN_IMAGE_EDIT_2511:
         rendered_control_dir = str(control_dir.resolve()) if control_dir is not None else "./controls"
         rendered_cache_dir = str(cache_dir.resolve()) if cache_dir is not None else "./cache"
