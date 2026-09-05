@@ -86,6 +86,22 @@ def test_qwen_edit_dataset_writes_musubi_toml_and_imports_pairs(tmp_path: Path) 
     assert not (dataset_dir / "controls" / "000001.png").exists()
 
 
+def test_krea2_dataset_writes_musubi_image_toml_and_caches(tmp_path: Path) -> None:
+    store = DatasetStore(tmp_path / "datasets")
+    settings = store.create_dataset("Krea Two", "krea2", "krea style")
+
+    dataset_dir = tmp_path / "datasets" / settings.slug
+    assert (dataset_dir / "cache").is_dir()
+    assert not (dataset_dir / "controls").exists()
+    toml = (dataset_dir / "dataset.toml").read_text(encoding="utf-8")
+    assert 'caption_extension = ".txt"' in toml
+    assert "resolution = [1024, 1024]" in toml
+    assert 'image_directory = "' in toml
+    assert 'cache_directory = "' in toml
+    assert 'control_directory' not in toml
+    assert f'num_repeats = {settings.num_repeats}' in toml
+
+
 def test_ideogram4_dataset_preserves_json_caption_and_metadata(tmp_path: Path) -> None:
     store = DatasetStore(tmp_path / "datasets")
     settings = store.create_dataset("Ideogram", "ideogram4", "fallback token")

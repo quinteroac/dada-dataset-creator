@@ -3,7 +3,7 @@ from pathlib import Path
 import asyncio
 import pytest
 
-from app.training_service import TrainingService
+from app.training_service import ProcessResult, TrainingService
 
 
 def test_build_train_command_uses_safe_arg_list_and_preset(tmp_path: Path) -> None:
@@ -226,6 +226,54 @@ def test_build_qwen_modal_command_uses_modal_cli_and_volume(tmp_path: Path) -> N
     assert '"/models/text_encoder.safetensors"' in payload_json
 
 
+def test_modal_training_downloads_outputs_to_local_output_dir(tmp_path: Path) -> None:
+    class DownloadingTrainingService(TrainingService):
+        def __init__(self) -> None:
+            super().__init__(datasets_root=tmp_path / "datasets")
+            self.commands = []
+
+        async def run_process(self, command, cwd, on_line, on_process_start=None):
+            self.commands.append(command)
+            if command[:4] == ["modal", "volume", "get", "--force"]:
+                local_output = Path(command[-1])
+                local_output.mkdir(parents=True, exist_ok=True)
+                (local_output / "downloaded.safetensors").write_bytes(b"fake")
+                (local_output / "final_lora.safetensors").write_bytes(b"fake")
+            return ProcessResult(return_code=0)
+
+    service = DownloadingTrainingService()
+    (tmp_path / "datasets" / "qwen").mkdir(parents=True)
+    dit = tmp_path / "dit.safetensors"
+    vae = tmp_path / "vae.safetensors"
+    text_encoder = tmp_path / "text_encoder.safetensors"
+    for path in [dit, vae, text_encoder]:
+        path.write_bytes(b"fake")
+    local_output = tmp_path / "outputs"
+    logs = []
+
+    result = asyncio.run(
+        service.train_qwen_edit_lora_on_modal(
+            "qwen",
+            {
+                "dit": str(dit),
+                "vae": str(vae),
+                "text_encoder": str(text_encoder),
+                "output_name": "final_lora",
+                "output_dir": str(local_output),
+                "modal_volume_name": "qwen-volume",
+                "modal_output_dir": "/data/outputs/qwen",
+            },
+            logs.append,
+        )
+    )
+
+    assert result.return_code == 0
+    assert result.output_path == str(local_output / "final_lora.safetensors")
+    download_command = next(command for command in service.commands if command[:4] == ["modal", "volume", "get", "--force"])
+    assert download_command[4:6] == ["qwen-volume", "/outputs/qwen"]
+    assert any("downloaded final safetensors" in line for line in logs)
+
+
 def test_validate_qwen_training_models_rejects_fp8_checkpoints() -> None:
     service = TrainingService()
 
@@ -265,7 +313,10 @@ def test_setup_musubi_installs_when_repo_already_exists(tmp_path: Path) -> None:
     result = asyncio.run(service.setup_musubi_tuner(lambda line: None))
 
     assert result.return_code == 0
-    assert service.commands == [service.setup_musubi_install_command()]
+    assert service.commands == [
+        service.update_musubi_command(),
+        service.setup_musubi_install_command(),
+    ]
 
 
 def test_setup_ai_toolkit_command_targets_vendor_ai_toolkit(tmp_path: Path) -> None:
@@ -278,6 +329,178 @@ def test_setup_ai_toolkit_command_targets_vendor_ai_toolkit(tmp_path: Path) -> N
     assert command[-1].endswith("vendor/ai-toolkit")
     assert install[:4] == ["uv", "pip", "install", "-r"]
     assert install[-1].endswith("vendor/ai-toolkit/requirements.txt")
+
+
+def test_build_krea2_commands_use_musubi_krea2_scripts_and_defaults(tmp_path: Path) -> None:
+    vendor = tmp_path / "vendor"
+    musubi = vendor / "musubi-tuner" / "src" / "musubi_tuner"
+    musubi.mkdir(parents=True)
+    (musubi / "krea2_train_network.py").write_text("# script", encoding="utf-8")
+    datasets = tmp_path / "datasets"
+    (datasets / "krea").mkdir(parents=True)
+    (datasets / "krea" / "dataset.toml").write_text("[general]", encoding="utf-8")
+    service = TrainingService(vendor_dir=vendor, datasets_root=datasets)
+    payload = {"dit": "dit", "vae": "vae", "text_encoder": "te"}
+
+    latent = service.build_krea2_latent_cache_command("krea", payload)
+    text = service.build_krea2_text_cache_command("krea", payload)
+    train = service.build_krea2_train_command("krea", payload)
+
+    assert "src/musubi_tuner/krea2_cache_latents.py" in latent
+    assert "--vae=vae" in latent
+    assert "--model_version" not in latent
+    assert "src/musubi_tuner/krea2_cache_text_encoder_outputs.py" in text
+    assert "--text_encoder=te" in text
+    assert "--batch_size=1" in text
+    assert "--fp8_vl" not in text
+    assert "src/musubi_tuner/krea2_train_network.py" in train
+    assert "--network_module=networks.lora_krea2" in train
+    assert "--network_dim=32" in train
+    assert "--network_alpha=32" in train
+    assert "--discrete_flow_shift=2.5" in train
+    assert "--gradient_checkpointing" in train
+    assert "--fp8_base" in train
+    assert "--fp8_scaled" in train
+    assert "--blocks_to_swap=26" in train
+    assert "--block_swap_h2d_only" in train
+    assert "--block_swap_ring_size=1" in train
+
+
+def test_build_krea2_modal_command_uses_modal_cli_and_rtx_pro_6000(tmp_path: Path) -> None:
+    datasets = tmp_path / "datasets"
+    (datasets / "krea").mkdir(parents=True)
+    service = TrainingService(datasets_root=datasets)
+    payload = {
+        "dit": "/data/models/krea2_raw.safetensors",
+        "vae": "/data/models/qwen_image_vae.safetensors",
+        "text_encoder": "/data/models/qwen3vl_4b_bf16.safetensors",
+        "modal_volume_name": "krea-volume",
+        "modal_gpu": "RTX-PRO-6000",
+        "modal_timeout": 7200,
+    }
+
+    command = service.build_krea2_modal_command("krea", payload)
+
+    assert "DADA_MODAL_VOLUME=krea-volume" in command
+    assert "DADA_MODAL_GPU=RTX-PRO-6000" in command
+    assert "DADA_MODAL_TIMEOUT=7200" in command
+    musubi_ref = next(arg for arg in command if arg.startswith("DADA_MODAL_MUSUBI_REF="))
+    assert musubi_ref.startswith("DADA_MODAL_MUSUBI_REF=30c658c")
+    assert "DADA_MODAL_LOCAL_DIT=/data/models/krea2_raw.safetensors" in command
+    assert "modal" in command
+    assert "app/modal_krea2.py" in command
+    assert "--dataset-slug" in command
+    assert "--payload-json" in command
+    payload_json = command[command.index("--payload-json") + 1]
+    assert '"/models/dit.safetensors"' in payload_json
+    assert '"/models/vae.safetensors"' in payload_json
+    assert '"/models/text_encoder.safetensors"' in payload_json
+
+
+def test_build_krea2_train_command_pairs_fp8_flags_and_block_swap(tmp_path: Path) -> None:
+    vendor = tmp_path / "vendor"
+    musubi = vendor / "musubi-tuner" / "src" / "musubi_tuner"
+    musubi.mkdir(parents=True)
+    (musubi / "krea2_train_network.py").write_text("# script", encoding="utf-8")
+    datasets = tmp_path / "datasets"
+    (datasets / "krea").mkdir(parents=True)
+    (datasets / "krea" / "dataset.toml").write_text("[general]", encoding="utf-8")
+    service = TrainingService(vendor_dir=vendor, datasets_root=datasets)
+
+    command = service.build_krea2_train_command(
+        "krea",
+        {
+            "dit": "dit",
+            "vae": "vae",
+            "text_encoder": "te",
+            "fp8_base": True,
+            "blocks_to_swap": "20",
+            "extra_args": "--some-flag value",
+        },
+    )
+
+    assert "--fp8_base" in command
+    assert "--fp8_scaled" in command
+    assert "--blocks_to_swap=20" in command
+    assert "--use_pinned_memory_for_block_swap" in command
+    assert "--block_swap_h2d_only" in command
+    assert "--block_swap_ring_size=1" in command
+    assert "--some-flag" in command
+
+
+def test_build_krea2_train_command_handles_turbo_cache_and_krea2_shift(tmp_path: Path) -> None:
+    vendor = tmp_path / "vendor"
+    musubi = vendor / "musubi-tuner" / "src" / "musubi_tuner"
+    musubi.mkdir(parents=True)
+    (musubi / "krea2_train_network.py").write_text("# script", encoding="utf-8")
+    datasets = tmp_path / "datasets"
+    (datasets / "krea").mkdir(parents=True)
+    (datasets / "krea" / "dataset.toml").write_text("[general]", encoding="utf-8")
+    service = TrainingService(vendor_dir=vendor, datasets_root=datasets)
+
+    command = service.build_krea2_train_command(
+        "krea",
+        {
+            "dit": "dit",
+            "vae": "vae",
+            "text_encoder": "te",
+            "timestep_sampling": "krea2_shift",
+            "turbo_dit": "/models/turbo.safetensors",
+            "turbo_dit_cache": True,
+        },
+    )
+
+    assert "--timestep_sampling=krea2_shift" in command
+    assert "--discrete_flow_shift=2.5" not in command
+    assert "--turbo_dit=/models/turbo.safetensors" in command
+    assert "--turbo_dit_cache" in command
+    assert not any(arg.startswith("--blocks_to_swap") for arg in command)
+
+
+def test_build_krea2_train_command_rejects_turbo_with_block_swap(tmp_path: Path) -> None:
+    vendor = tmp_path / "vendor"
+    musubi = vendor / "musubi-tuner" / "src" / "musubi_tuner"
+    musubi.mkdir(parents=True)
+    (musubi / "krea2_train_network.py").write_text("# script", encoding="utf-8")
+    datasets = tmp_path / "datasets"
+    (datasets / "krea").mkdir(parents=True)
+    (datasets / "krea" / "dataset.toml").write_text("[general]", encoding="utf-8")
+    service = TrainingService(vendor_dir=vendor, datasets_root=datasets)
+
+    with pytest.raises(ValueError, match="cannot be combined with blocks_to_swap"):
+        service.build_krea2_train_command(
+            "krea",
+            {
+                "dit": "dit",
+                "vae": "vae",
+                "text_encoder": "te",
+                "blocks_to_swap": "20",
+                "turbo_dit": "/models/turbo.safetensors",
+            },
+        )
+
+
+def test_krea2_ready_requires_krea2_script(tmp_path: Path) -> None:
+    vendor = tmp_path / "vendor"
+    musubi = vendor / "musubi-tuner" / "src" / "musubi_tuner"
+    musubi.mkdir(parents=True)
+    service = TrainingService(vendor_dir=vendor)
+
+    assert service.krea2_ready() is False
+    (musubi / "krea2_train_network.py").write_text("# script", encoding="utf-8")
+    assert service.krea2_ready() is True
+
+
+def test_validate_krea2_training_models_rejects_fp8_checkpoints() -> None:
+    service = TrainingService()
+
+    with pytest.raises(ValueError, match="requires bf16 checkpoint files"):
+        service._validate_krea2_training_models(
+            {
+                "dit": "/models/Krea-2-Raw_fp8.safetensors",
+                "text_encoder": "/models/qwen3vl_4b_fp8.safetensors",
+            }
+        )
 
 
 def test_build_ideogram4_training_config_and_command(tmp_path: Path) -> None:

@@ -10,6 +10,7 @@ from fastapi import UploadFile
 
 from app.models import (
     DATASET_TYPE_IDEOGRAM4,
+    DATASET_TYPE_KREA2,
     DATASET_TYPE_QWEN_IMAGE_EDIT_2511,
     CuratorCandidate,
     DatasetSettings,
@@ -69,6 +70,8 @@ class DatasetStore:
         (dataset_dir / "curator").mkdir(parents=True, exist_ok=True)
         if dataset_type == DATASET_TYPE_QWEN_IMAGE_EDIT_2511:
             (dataset_dir / "controls").mkdir(parents=True, exist_ok=True)
+            (dataset_dir / "cache").mkdir(parents=True, exist_ok=True)
+        if dataset_type == DATASET_TYPE_KREA2:
             (dataset_dir / "cache").mkdir(parents=True, exist_ok=True)
         (dataset_dir / "references").mkdir(parents=True, exist_ok=True)
         self.save_settings(settings)

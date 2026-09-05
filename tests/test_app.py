@@ -356,6 +356,116 @@ def test_fastapi_ideogram4_routes_create_jobs(tmp_path: Path) -> None:
         app.dependency_overrides.clear()
 
 
+def test_fastapi_krea2_routes_create_jobs_and_render(tmp_path: Path) -> None:
+    store = DatasetStore(tmp_path / "datasets")
+    job_store = JobStore(tmp_path / "datasets")
+    runner = NoopRunner()
+    training_runner = NoopTrainingRunner()
+
+    app.dependency_overrides[get_store] = lambda: store
+    app.dependency_overrides[get_job_store] = lambda: job_store
+    app.dependency_overrides[get_runner] = lambda: runner
+    app.dependency_overrides[get_training_runner] = lambda: training_runner
+    client = TestClient(app)
+    try:
+        create = client.post(
+            "/datasets",
+            data={
+                "name": "Krea Web",
+                "dataset_type": "krea2",
+                "trigger_token": "krea style",
+                "resolution_width": 1024,
+                "resolution_height": 1024,
+                "batch_size": 1,
+                "num_repeats": 10,
+                "min_bucket_reso": 512,
+                "max_bucket_reso": 1536,
+                "bucket_reso_steps": 16,
+            },
+            follow_redirects=False,
+        )
+        assert create.status_code == 303
+        assert create.headers["location"] == "/datasets/krea_web"
+
+        detail = client.get("/datasets/krea_web")
+        assert detail.status_code == 200
+        assert "Krea 2 Training" in detail.text
+        assert "train-krea2" in detail.text
+        assert 'name="turbo_dit_cache" value="true"' in detail.text
+        assert 'name="block_swap_h2d_only" value="true" checked' in detail.text
+        assert 'name="block_swap_ring_size" value="1"' in detail.text
+        assert 'name="num_repeats"' in detail.text
+        assert 'value="4" min="1"' in detail.text
+        assert "data-training-backend" in detail.text
+        assert 'value="dada-krea2"' in detail.text
+        assert 'value="RTX-PRO-6000"' in detail.text
+        assert "fp8 VL cache" not in detail.text
+
+        setup = client.post("/datasets/krea_web/setup-musubi-tuner", follow_redirects=False)
+        invalid_train = client.post(
+            "/datasets/krea_web/train-krea2",
+            data={
+                "dit": "/models/Krea-2-Raw/raw.safetensors",
+                "vae": "/models/qwen_image_vae.safetensors",
+                "text_encoder": "/models/qwen3vl_4b_bf16.safetensors",
+                "blocks_to_swap": "20",
+                "turbo_dit": "/models/Krea-2-Turbo/turbo.safetensors",
+            },
+            follow_redirects=False,
+        )
+        train = client.post(
+            "/datasets/krea_web/train-krea2",
+            data={
+                "dit": "/models/Krea-2-Raw/raw.safetensors",
+                "vae": "/models/qwen_image_vae.safetensors",
+                "text_encoder": "/models/qwen3vl_4b_bf16.safetensors",
+                "network_dim": 32,
+                "num_repeats": 4,
+                "fp8_base": "true",
+                "blocks_to_swap": "20",
+            },
+            follow_redirects=False,
+        )
+        modal_train = client.post(
+            "/datasets/krea_web/train-krea2",
+            data={
+                "dit": "/models/Krea-2-Raw/raw.safetensors",
+                "vae": "/models/qwen_image_vae.safetensors",
+                "text_encoder": "/models/qwen3vl_4b_bf16.safetensors",
+                "training_backend": "modal",
+                "modal_gpu": "RTX-PRO-6000",
+                "modal_volume_name": "dada-krea2",
+                "modal_bake_models": "true",
+            },
+            follow_redirects=False,
+        )
+        assert setup.status_code == 303
+        assert invalid_train.status_code == 303
+        assert "Turbo%20DiT%20samples%20cannot%20be%20used%20with%20blocks_to_swap" in invalid_train.headers[
+            "location"
+        ]
+        assert train.status_code == 303
+        assert modal_train.status_code == 303
+        types = [job.type for job in job_store.list_jobs("krea_web")]
+        assert "setup_musubi_tuner" in types
+        assert "train_krea2_lora" in types
+        payloads = [job.payload for job in job_store.list_jobs("krea_web") if job.type == "train_krea2_lora"]
+        payload = next(payload for payload in payloads if payload["training_backend"] == "local")
+        assert payload["network_dim"] == 32
+        assert payload["num_repeats"] == 4
+        assert payload["fp8_base"] is True
+        assert payload["fp8_scaled"] is True
+        assert payload["blocks_to_swap"] == "20"
+        assert payload["block_swap_h2d_only"] is True
+        assert payload["block_swap_ring_size"] == 1
+        modal_payload = next(payload for payload in payloads if payload["training_backend"] == "modal")
+        assert modal_payload["modal_gpu"] == "RTX-PRO-6000"
+        assert modal_payload["modal_volume_name"] == "dada-krea2"
+        assert modal_payload["modal_bake_models"] is True
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_fastapi_qwen_generate_edit_pairs_uses_fallback_prompt(tmp_path: Path) -> None:
     store = DatasetStore(tmp_path / "datasets")
     settings = store.create_dataset("Qwen Web", "qwen_image_edit_2511", "Edit portraits into watercolor")

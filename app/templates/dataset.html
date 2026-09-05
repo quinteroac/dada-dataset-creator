@@ -232,6 +232,48 @@
     <button type="submit">Start Qwen Edit training</button>
   </form>
 </section>
+{% elif settings.dataset_type == 'minimax_h3' %}
+<section class="training-panel">
+  <div class="jobs-header">
+    <div>
+      <h2>MiniMax H3 Training · Images</h2>
+      <p>Train a LoRA with Ostris AI Toolkit using images and .txt captions. Each image trains as one frame, without audio.</p>
+    </div>
+    <form method="post" action="/datasets/{{ settings.slug }}/setup-ai-toolkit">
+      <button type="submit" class="secondary">Setup AI Toolkit</button>
+    </form>
+  </div>
+  <form method="post" action="/datasets/{{ settings.slug }}/train-minimax-h3" class="training-grid">
+    <label>Training backend
+      <select name="training_backend" data-training-backend>
+        <option value="local">Local</option>
+        <option value="modal">Modal</option>
+      </select>
+    </label>
+    <label>Model repository or local Comfy-layout folder<input name="model_path" value="Comfy-Org/MiniMax-H3" required></label>
+    <label>Output name<input name="output_name" value="{{ settings.slug }}_minimax_h3_lora" required></label>
+    <label>Output directory<input name="output_dir" value="datasets/{{ settings.slug }}/outputs"></label>
+    <label>Network rank / alpha<input type="number" name="network_dim" value="16" min="1"></label>
+    <label>Steps<input type="number" name="steps" value="1000" min="1"></label>
+    <label>Learning rate<input name="learning_rate" value="1e-4" required></label>
+    <label>Resolution list (multiples of 32)<input name="resolution_list" value="512" required></label>
+    <label>Save every steps<input type="number" name="save_every" value="250" min="1"></label>
+    <label class="wide">Optional training adapter (local path or Hugging Face file path)<input name="assistant_lora_path" placeholder="Optional de-distillation adapter"></label>
+    <div class="toggle-row">
+      <input type="hidden" name="layer_offloading" value="false">
+      <label><input type="checkbox" name="layer_offloading" value="true" checked> Offload 95% of transformer and text encoder layers</label>
+    </div>
+    <p class="wide">Uses batch size and repeats from dataset settings. Automatic preview sampling is disabled. Missing model files download when training starts.</p>
+    <div class="wide modal-training-options" hidden>
+      <label>Modal volume<input name="modal_volume_name" value="dada-minimax-h3"></label>
+      <label>Modal GPU<input name="modal_gpu" value="RTX-PRO-6000"></label>
+      <label>Timeout (seconds)<input type="number" name="modal_timeout" value="86400" min="600" max="86400"></label>
+      <label>Remote output directory<input name="modal_output_dir" value="/data/outputs/{{ settings.slug }}"></label>
+      <p>Modal installs AI Toolkit automatically. Local model folders and adapter files are uploaded; repository weights download into persistent storage. Finished LoRAs download to the local output directory.</p>
+    </div>
+    <button type="submit">Start MiniMax H3 image training</button>
+  </form>
+</section>
 {% elif settings.dataset_type == ideogram4_dataset_type %}
 <section class="training-panel">
   <div class="jobs-header">
@@ -326,6 +368,168 @@
       <code>python run.py datasets/{{ settings.slug }}/ideogram4_training_config.yaml</code>
     </div>
     <button type="submit">Start Ideogram4 training</button>
+  </form>
+</section>
+{% elif settings.dataset_type == krea2_dataset_type %}
+<section class="training-panel">
+  <div class="jobs-header">
+    <div>
+      <h2>Krea 2 Training</h2>
+      <p>Cache image latents and text encoder outputs, then train a Musubi Krea 2 LoRA on the RAW DiT.</p>
+    </div>
+    <form method="post" action="/datasets/{{ settings.slug }}/setup-musubi-tuner">
+      <button type="submit" class="secondary">
+        {% if krea2_ready %}Check musubi-tuner{% else %}Setup musubi-tuner{% endif %}
+      </button>
+    </form>
+  </div>
+  <form method="post" action="/datasets/{{ settings.slug }}/train-krea2" class="training-grid">
+    <label>
+      Krea 2 RAW DiT
+      <input name="dit" placeholder="/models/krea/Krea-2-Raw/raw.safetensors" required>
+    </label>
+    <label>
+      Qwen-Image VAE
+      <input name="vae" placeholder="/models/qwen/qwen_image_vae.safetensors" required>
+    </label>
+    <label>
+      Qwen3-VL-4B text encoder
+      <input name="text_encoder" placeholder="/models/qwen3vl/qwen3vl_4b_bf16.safetensors" required>
+    </label>
+    <label>
+      Output name
+      <input name="output_name" value="{{ settings.slug }}_krea2_lora">
+    </label>
+    <label>
+      Output dir
+      <input name="output_dir" value="datasets/{{ settings.slug }}/outputs">
+    </label>
+    <label>
+      Training target
+      <select name="training_backend" data-training-backend>
+        <option value="local" selected>Local GPU</option>
+        <option value="modal">Modal</option>
+      </select>
+    </label>
+    <label>
+      Network dim (rank)
+      <input type="number" name="network_dim" value="32" min="1">
+    </label>
+    <label>
+      Network alpha
+      <input type="number" name="network_alpha" value="32" min="1">
+    </label>
+    <label>
+      Learning rate
+      <input name="learning_rate" value="1e-4">
+    </label>
+    <label>
+      Optimizer
+      <input name="optimizer_type" value="adamw8bit">
+    </label>
+    <label>
+      Epochs
+      <input type="number" name="max_train_epochs" value="6" min="1">
+    </label>
+    <label>
+      Repeats
+      <input type="number" name="num_repeats" value="4" min="1">
+    </label>
+    <label>
+      Save every N epochs
+      <input type="number" name="save_every_n_epochs" value="1" min="1">
+    </label>
+    <label>
+      Timestep sampling
+      <select name="timestep_sampling">
+        <option value="shift" selected>shift</option>
+        <option value="krea2_shift">krea2_shift (resolution-aware)</option>
+        <option value="flux_shift">flux_shift</option>
+        <option value="sigmoid">sigmoid</option>
+        <option value="uniform">uniform</option>
+      </select>
+    </label>
+    <label>
+      Weighting scheme
+      <select name="weighting_scheme">
+        <option value="none" selected>none</option>
+        <option value="sqrt-dynamic">sqrt-dynamic</option>
+        <option value="logit-normal">logit-normal</option>
+        <option value="mode">mode</option>
+        <option value="cosmap">cosmap</option>
+      </select>
+    </label>
+    <label>
+      Discrete flow shift
+      <input name="discrete_flow_shift" value="2.5">
+    </label>
+    <label>
+      Precision
+      <select name="mixed_precision">
+        <option value="bf16">bf16</option>
+        <option value="fp16">fp16</option>
+      </select>
+    </label>
+    <label>
+      Text encoder cache batch size
+      <input type="number" name="text_encoder_batch_size" value="1" min="1">
+    </label>
+    <label>
+      Blocks to swap (max 26)
+      <input name="blocks_to_swap" value="26" placeholder="leave empty only on high VRAM">
+    </label>
+    <label>
+      Block swap ring size
+      <input type="number" name="block_swap_ring_size" value="1" min="1">
+    </label>
+    <label>
+      Turbo DiT for samples (optional)
+      <input name="turbo_dit" placeholder="/models/krea/Krea-2-Turbo/turbo.safetensors">
+    </label>
+    <div class="toggle-row">
+      <input type="hidden" name="gradient_checkpointing" value="false">
+      <input type="hidden" name="fp8_base" value="false">
+      <input type="hidden" name="fp8_scaled" value="false">
+      <input type="hidden" name="use_pinned_memory_for_block_swap" value="false">
+      <input type="hidden" name="block_swap_h2d_only" value="false">
+      <input type="hidden" name="compile" value="false">
+      <input type="hidden" name="turbo_dit_cache" value="false">
+      <label><input type="checkbox" name="gradient_checkpointing" value="true" checked> gradient checkpointing</label>
+      <label><input type="checkbox" name="fp8_base" value="true" checked> fp8 base</label>
+      <label><input type="checkbox" name="fp8_scaled" value="true" checked> fp8 scaled (required with fp8 base)</label>
+      <label><input type="checkbox" name="use_pinned_memory_for_block_swap" value="true" checked> pinned block swap</label>
+      <label><input type="checkbox" name="block_swap_h2d_only" value="true" checked> H2D-only block swap</label>
+      <label><input type="checkbox" name="compile" value="true"> torch.compile</label>
+      <label><input type="checkbox" name="turbo_dit_cache" value="true"> cache Turbo DiT in RAM</label>
+    </div>
+    <label class="wide">
+      Extra args
+      <textarea name="extra_args" rows="3" placeholder="--network_args exclude_patterns=['pattern']"></textarea>
+    </label>
+    <div class="wide command-preview">
+      <strong>Command preview</strong>
+      <code>krea2_cache_latents.py → krea2_cache_text_encoder_outputs.py → accelerate launch ... krea2_train_network.py --network_module=networks.lora_krea2</code>
+    </div>
+    <div class="wide modal-training-options" hidden>
+      <label>
+        Modal volume
+        <input name="modal_volume_name" value="dada-krea2">
+      </label>
+      <label>
+        Modal GPU
+        <input name="modal_gpu" value="RTX-PRO-6000">
+      </label>
+      <label>
+        Modal timeout seconds
+        <input type="number" name="modal_timeout" value="86400" min="600">
+      </label>
+      <label>
+        Modal output dir
+        <input name="modal_output_dir" value="/data/outputs/{{ settings.slug }}">
+      </label>
+      <label><input type="checkbox" name="modal_bake_models" value="true" checked> bake local model files into Modal image</label>
+    </div>
+    <button type="submit">Start Krea 2 training</button>
   </form>
 </section>
 {% else %}

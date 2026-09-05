@@ -16,7 +16,8 @@ from app.jobs import JobStore
 from app.storage import DatasetNotFoundError, DatasetStore
 from app.training_runner import TrainingJobRunner
 from app.training_service import TrainingService
-from app.models import DATASET_TYPE_IDEOGRAM4, DATASET_TYPE_QWEN_IMAGE_EDIT_2511
+from app.models import DATASET_TYPE_IDEOGRAM4, DATASET_TYPE_KREA2, DATASET_TYPE_QWEN_IMAGE_EDIT_2511
+from app.models import DATASET_TYPE_MINIMAX_H3
 
 
 @asynccontextmanager
@@ -135,9 +136,11 @@ async def dataset_detail(
             "jobs": [job.to_json() for job in job_store.list_jobs(slug)],
             "training_ready": get_training_service().sd_scripts_ready(),
             "musubi_ready": get_training_service().musubi_tuner_ready(),
+            "krea2_ready": get_training_service().krea2_ready(),
             "ai_toolkit_ready": get_training_service().ai_toolkit_ready(),
             "qwen_dataset_type": DATASET_TYPE_QWEN_IMAGE_EDIT_2511,
             "ideogram4_dataset_type": DATASET_TYPE_IDEOGRAM4,
+            "krea2_dataset_type": DATASET_TYPE_KREA2,
             "message": message,
             "error": error,
         },
@@ -168,6 +171,7 @@ async def dataset_curator(
             "jobs": [job.to_json() for job in job_store.list_jobs(slug)],
             "qwen_dataset_type": DATASET_TYPE_QWEN_IMAGE_EDIT_2511,
             "ideogram4_dataset_type": DATASET_TYPE_IDEOGRAM4,
+            "krea2_dataset_type": DATASET_TYPE_KREA2,
             "message": message,
             "error": error,
         },
@@ -512,8 +516,8 @@ async def setup_ai_toolkit(
     training_runner: TrainingJobRunner = Depends(get_training_runner),
 ) -> RedirectResponse:
     settings = store.load_settings(slug)
-    if settings.dataset_type != DATASET_TYPE_IDEOGRAM4:
-        return RedirectResponse(f"/datasets/{slug}?error=This dataset is not Ideogram4", status_code=303)
+    if settings.dataset_type not in {DATASET_TYPE_IDEOGRAM4, DATASET_TYPE_MINIMAX_H3}:
+        return RedirectResponse(f"/datasets/{slug}?error=This dataset does not use AI Toolkit", status_code=303)
     job = job_store.create_job(slug, "setup_ai_toolkit", {})
     training_runner.enqueue(job)
     return RedirectResponse(f"/datasets/{slug}?message=AI Toolkit setup job queued", status_code=303)
@@ -724,6 +728,158 @@ async def train_ideogram4_lora(
     return RedirectResponse(f"/datasets/{slug}?message=Ideogram4 training job queued", status_code=303)
 
 
+@app.post("/datasets/{slug}/train-minimax-h3")
+async def train_minimax_h3_lora(
+    slug: str,
+    model_path: str = Form("Comfy-Org/MiniMax-H3"),
+    output_name: str = Form(""),
+    output_dir: str = Form(""),
+    network_dim: int = Form(16, ge=1),
+    steps: int = Form(1000, ge=1),
+    learning_rate: float = Form(1e-4, gt=0),
+    resolution_list: str = Form("512"),
+    save_every: int = Form(250, ge=1),
+    layer_offloading: bool = Form(True),
+    assistant_lora_path: str = Form(""),
+    training_backend: str = Form("local"),
+    modal_volume_name: str = Form("dada-minimax-h3"),
+    modal_gpu: str = Form("RTX-PRO-6000"),
+    modal_timeout: int = Form(86400, ge=600, le=86400),
+    modal_output_dir: str = Form(""),
+    store: DatasetStore = Depends(get_store),
+    job_store: JobStore = Depends(get_job_store),
+    training_runner: TrainingJobRunner = Depends(get_training_runner),
+) -> RedirectResponse:
+    settings = store.load_settings(slug)
+    if settings.dataset_type != DATASET_TYPE_MINIMAX_H3:
+        raise HTTPException(400, "This dataset is not MiniMax H3")
+    if training_backend not in {"local", "modal"}:
+        raise HTTPException(400, "Unsupported training backend")
+    if not store.list_images(slug):
+        raise HTTPException(400, "Upload images before training MiniMax H3")
+    payload = {
+        "model_path": model_path.strip(),
+        "output_name": output_name.strip() or f"{slug}_minimax_h3_lora",
+        "output_dir": output_dir,
+        "network_dim": network_dim,
+        "steps": steps,
+        "learning_rate": learning_rate,
+        "resolution_list": resolution_list,
+        "save_every": save_every,
+        "batch_size": settings.batch_size,
+        "num_repeats": settings.num_repeats,
+        "layer_offloading": layer_offloading,
+        "assistant_lora_path": assistant_lora_path.strip(),
+        "training_backend": training_backend,
+        "modal_volume_name": modal_volume_name,
+        "modal_gpu": modal_gpu,
+        "modal_timeout": modal_timeout,
+        "modal_output_dir": modal_output_dir,
+    }
+    try:
+        TrainingService(datasets_root=store.root).build_minimax_h3_config(slug, payload)
+        if training_backend == "modal":
+            TrainingService(datasets_root=store.root).build_minimax_h3_modal_command(slug, payload)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    job = job_store.create_job(slug, "train_minimax_h3_lora", payload)
+    training_runner.enqueue(job)
+    return RedirectResponse(f"/datasets/{slug}?message=MiniMax H3 image training queued", status_code=303)
+
+
+@app.post("/datasets/{slug}/train-krea2")
+async def train_krea2_lora(
+    slug: str,
+    dit: str = Form(...),
+    vae: str = Form(...),
+    text_encoder: str = Form(...),
+    output_name: str = Form(""),
+    output_dir: str = Form(""),
+    training_backend: str = Form("local"),
+    network_dim: int = Form(32),
+    network_alpha: int = Form(32),
+    learning_rate: str = Form("1e-4"),
+    optimizer_type: str = Form("adamw8bit"),
+    max_train_epochs: int = Form(16),
+    num_repeats: int | None = Form(None),
+    save_every_n_epochs: int = Form(1),
+    timestep_sampling: str = Form("shift"),
+    weighting_scheme: str = Form("none"),
+    discrete_flow_shift: str = Form("2.5"),
+    mixed_precision: str = Form("bf16"),
+    text_encoder_batch_size: int = Form(1),
+    gradient_checkpointing: bool = Form(True),
+    fp8_base: bool = Form(True),
+    fp8_scaled: bool = Form(True),
+    blocks_to_swap: str = Form("26"),
+    use_pinned_memory_for_block_swap: bool = Form(True),
+    block_swap_h2d_only: bool = Form(True),
+    block_swap_ring_size: int = Form(1),
+    compile: bool = Form(False),
+    turbo_dit: str = Form(""),
+    turbo_dit_cache: bool = Form(False),
+    modal_volume_name: str = Form("dada-krea2"),
+    modal_gpu: str = Form("RTX-PRO-6000"),
+    modal_timeout: int = Form(86400),
+    modal_output_dir: str = Form(""),
+    modal_bake_models: bool = Form(False),
+    extra_args: str = Form(""),
+    store: DatasetStore = Depends(get_store),
+    job_store: JobStore = Depends(get_job_store),
+    training_runner: TrainingJobRunner = Depends(get_training_runner),
+) -> RedirectResponse:
+    settings = store.load_settings(slug)
+    if settings.dataset_type != DATASET_TYPE_KREA2:
+        return RedirectResponse(f"/datasets/{slug}?error=This dataset is not Krea 2", status_code=303)
+    if turbo_dit.strip() and blocks_to_swap.strip() and blocks_to_swap.strip() != "0":
+        return RedirectResponse(
+            f"/datasets/{slug}?error=Turbo DiT samples cannot be used with blocks_to_swap",
+            status_code=303,
+        )
+    payload = {
+        "dit": dit,
+        "vae": vae,
+        "text_encoder": text_encoder,
+        "output_name": output_name or f"{slug}_krea2_lora",
+        "output_dir": output_dir or str((Path("datasets") / slug / "outputs").resolve()),
+        "training_backend": training_backend,
+        "network_dim": network_dim,
+        "network_alpha": network_alpha,
+        "learning_rate": learning_rate,
+        "optimizer_type": optimizer_type,
+        "max_train_epochs": max_train_epochs,
+        "save_every_n_epochs": save_every_n_epochs,
+        "timestep_sampling": timestep_sampling,
+        "weighting_scheme": weighting_scheme,
+        "discrete_flow_shift": discrete_flow_shift,
+        "mixed_precision": mixed_precision,
+        "text_encoder_batch_size": text_encoder_batch_size,
+        "gradient_checkpointing": gradient_checkpointing,
+        "fp8_base": fp8_base,
+        "fp8_scaled": fp8_scaled,
+        "blocks_to_swap": blocks_to_swap,
+        "use_pinned_memory_for_block_swap": use_pinned_memory_for_block_swap,
+        "block_swap_h2d_only": block_swap_h2d_only,
+        "block_swap_ring_size": block_swap_ring_size,
+        "compile": compile,
+        "turbo_dit": turbo_dit,
+        "turbo_dit_cache": turbo_dit_cache,
+        "modal_volume_name": modal_volume_name,
+        "modal_gpu": modal_gpu,
+        "modal_timeout": modal_timeout,
+        "modal_output_dir": modal_output_dir or f"/data/outputs/{slug}",
+        "modal_bake_models": modal_bake_models,
+        "resolution_width": settings.resolution_width,
+        "resolution_height": settings.resolution_height,
+        "batch_size": settings.batch_size,
+        "num_repeats": num_repeats or settings.num_repeats,
+        "extra_args": extra_args,
+    }
+    job = job_store.create_job(slug, "train_krea2_lora", payload)
+    training_runner.enqueue(job)
+    return RedirectResponse(f"/datasets/{slug}?message=Krea 2 training job queued", status_code=303)
+
+
 @app.get("/datasets/{slug}/jobs")
 async def list_jobs(
     slug: str,
@@ -757,7 +913,9 @@ async def cancel_job(
     if job.type not in {
         "train_anima_lora",
         "train_qwen_edit_lora",
+        "train_krea2_lora",
         "train_ideogram4_lora",
+        "train_minimax_h3_lora",
         "setup_musubi_tuner",
         "setup_sd_scripts",
         "setup_ai_toolkit",

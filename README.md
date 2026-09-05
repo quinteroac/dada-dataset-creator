@@ -4,7 +4,9 @@ Local FastAPI app for creating, curating, captioning, exporting, and training Lo
 
 - **Anima LoRA**, compatible with `kohya-ss/sd-scripts` and `anima_train_network.py`.
 - **Qwen Image Edit-2511 LoRA**, compatible with `kohya-ss/musubi-tuner`.
+- **Krea 2 LoRA**, compatible with `kohya-ss/musubi-tuner` (`krea2_train_network.py`).
 - **Ideogram4 LoRA**, compatible with `ostris/ai-toolkit`.
+- **MiniMax H3 image LoRA**, using Ostris AI Toolkit with still images and `.txt` captions.
 
 The app works fully locally for image uploads, manual caption editing, and dataset export. Codex image generation can also be used to create synthetic datasets from prompts and references. Codex, training, and Modal features are optional.
 
@@ -32,6 +34,7 @@ Open http://127.0.0.1:8000 on this machine, or `http://<your-machine-ip>:8000` f
 2. Choose the dataset type:
    - `Anima`: images with tag-style captions.
    - `Qwen Image Edit-2511`: control/target pairs with edit instructions.
+   - `Krea 2`: images with captions (text-to-image, no control images).
    - `Ideogram4`: images with structured JSON captions and estimated bboxes.
 3. Upload images or edit pairs.
 4. Optionally use Codex image generation to create synthetic training images or Qwen edit pairs.
@@ -94,6 +97,25 @@ datasets/
       000001.png
       000001.txt
       000001.meta.json
+    references/
+    raw/
+    curator/
+    outputs/
+```
+
+Krea 2 dataset:
+
+```text
+datasets/
+  my_krea_dataset/
+    settings.json
+    dataset.toml
+    krea2_training_config.json
+    images/
+      000001.png
+      000001.txt
+      000001.meta.json
+    cache/
     references/
     raw/
     curator/
@@ -184,7 +206,7 @@ For Qwen Image Edit-2511, the app uses `kohya-ss/musubi-tuner`.
 
 From the dataset page:
 
-- `setup_musubi_tuner`: clones `kohya-ss/musubi-tuner` into `vendor/musubi-tuner` and installs it as an editable package.
+- `setup_musubi_tuner`: clones `kohya-ss/musubi-tuner` into `vendor/musubi-tuner` and installs it as an editable package. If the checkout already exists, it is fast-forward pulled first so newer scripts (such as the Krea 2 trainers) become available.
 - `train_qwen_edit_lora`: runs latent caching, text encoder caching, and training.
 
 Local training runs:
@@ -201,9 +223,56 @@ Notes:
 - Do not use fp8 checkpoints as base files; use the `fp8_base`, `fp8_scaled`, and `fp8_vl` flags for VRAM savings.
 - The default preset uses `blocks_to_swap=36`.
 
+## Krea 2 Training
+
+For Krea 2, the app uses `kohya-ss/musubi-tuner` (the same trainer as Qwen Image Edit-2511). Krea 2 is a single-stream MMDiT text-to-image model that uses **Qwen3-VL-4B-Instruct** as the text encoder and the **Qwen-Image VAE**. The recommended workflow is to **train on the RAW DiT** and run inference on the distilled **Turbo** DiT.
+
+From the dataset page:
+
+- `setup_musubi-tuner`: clones `kohya-ss/musubi-tuner` into `vendor/musubi-tuner` (or fast-forward pulls the existing checkout so the Krea 2 scripts are available) and installs it as an editable package.
+- `train_krea2_lora`: runs latent caching, text encoder output caching, and training.
+
+Local training runs:
+
+```text
+python src/musubi_tuner/krea2_cache_latents.py
+python src/musubi_tuner/krea2_cache_text_encoder_outputs.py
+accelerate launch src/musubi_tuner/krea2_train_network.py
+```
+
+Notes:
+
+- Use bf16 checkpoints for `dit` (RAW) and `text_encoder`. Do not pass fp8 model files; use the `fp8 base` / `fp8 scaled` toggles for DiT VRAM savings. Krea 2 requires `--fp8_base` and `--fp8_scaled` together, so enabling either toggle enables both.
+- Default LoRA targets all Linear layers in the DiT with rank/alpha 32 (`networks.lora_krea2`), matching the model authors' recommended default.
+- The default timestep sampling is `shift` with `discrete_flow_shift 2.5` (the K2 inference time-shift at 1024×1024). For varying-resolution training, switch to `krea2_shift`, which reproduces K2's resolution-aware schedule per sample.
+- `blocks_to_swap` maximum is 26 (28 blocks − 2). The app defaults Krea 2 local training to `fp8_base`, `fp8_scaled`, `blocks_to_swap=26`, H2D-only block swap, and `block_swap_ring_size=1` for 16 GB class GPUs; reduce or clear block swap only when you have enough VRAM.
+- `Turbo DiT for samples` is optional: when set, sample images during training are generated on the Turbo model with the trained LoRA applied on top. `--turbo_dit` cannot be combined with `--blocks_to_swap`.
+- Model files: RAW DiT `raw.safetensors` from `krea/Krea-2-Raw`, Turbo DiT `turbo.safetensors` from `krea/Krea-2-Turbo`, VAE from `Comfy-Org/Qwen-Image-Edit_ComfyUI`, and the text encoder `qwen3vl_4b_bf16.safetensors` from `Comfy-Org/Qwen3-VL`.
+- The Modal backend runs `modal run app/modal_krea2.py` and defaults to volume `dada-krea2` with GPU `RTX-PRO-6000`. Keep bf16 checkpoints for RAW DiT and text encoder; the Modal path still uses Musubi's `--fp8_base` / `--fp8_scaled` flags for memory savings.
+
 ## Ideogram4 Training
 
-For Ideogram4, the app uses `ostris/ai-toolkit`.
+For Ideogram4 and MiniMax H3, the app uses `ostris/ai-toolkit`.
+
+MiniMax H3 also supports **Training backend → Modal**, with `RTX-PRO-6000` as the default GPU, matching Krea 2 ([Modal GPU identifiers](https://modal.com/docs/guide/gpu)). Install the Modal dependency group (`uv sync --group modal`) and authenticate with `uv run modal setup` before starting a cloud job. Local AI Toolkit setup is unnecessary for Modal.
+
+The Modal worker (`app/modal_minimax_h3.py`) installs a pinned AI Toolkit revision, uses a persistent `dada-minimax-h3` volume, and requests 128 GiB of host RAM for model loading/offloading. The timeout defaults to 86400 seconds. GPU, volume, timeout, and remote output directory can be changed in the form. Remote output directories must be under `/data/outputs/`.
+
+Each cloud run uploads a fresh snapshot of images and `.txt` captions. A local Comfy-layout model directory or local adapter file is uploaded automatically; repository weights download remotely and remain cached in the volume. Existing `/data/...` model paths refer to that volume. After successful training, LoRA checkpoints download to the configured local output directory. If downloading fails, the job retains its Modal output location. Dataset snapshots, models, caches, and checkpoints remain in the volume until removed. Cancelling stops the attached Modal CLI, as in the Krea 2 integration; inspect the Modal dashboard if an interrupted remote run remains active.
+
+The Modal integration is covered by simulated execution/upload tests; a real cloud image build and GPU training run have not been verified.
+
+To train MiniMax H3 from images:
+
+1. Create a **MiniMax H3 (images)** dataset, upload PNG/JPEG/WebP images, and edit or generate their `.txt` captions.
+2. Click **Setup AI Toolkit**. An existing checkout must already include MiniMax H3 support; otherwise update it with `git -C vendor/ai-toolkit pull --ff-only`, then rerun setup to install its requirements.
+3. Use `Comfy-Org/MiniMax-H3` or a local folder with the same component layout. Missing weights download at training time. The default partition is `fl2va_pruned`; quantized weights are loaded in their existing format.
+4. Start with resolution `512`, rank `16`, and batch size `1`. Resolution entries must be multiples of 32. Dataset settings supply batch size and repeats. Layer offloading defaults to 95%; actual GPU/RAM requirements depend on the model and configuration.
+5. Click **Start MiniMax H3 image training** and follow the job logs. Jobs can be cancelled from the panel.
+
+The generated `minimax_h3_training_config.yaml` uses JSON syntax (valid YAML), with `arch: minimax_h3`, `num_frames: 1`, and audio disabled. Latents and text embeddings are cached; automatic preview sampling is disabled. An optional assistant training adapter can be supplied. Outputs are stored under `outputs/<output_name>/` by default. Training images teach appearance/style; this workflow supplies no motion or audio examples.
+
+The configuration follows the upstream [MiniMax H3 implementation](https://github.com/ostris/ai-toolkit/blob/main/extensions_built_in/diffusion_models/minimax_h3/minimax_h3.py) and [dataset configuration](https://github.com/ostris/ai-toolkit/blob/main/toolkit/config_modules.py). Automated tests verify configuration and job execution with a simulated training process; they do not verify GPU training or model quality.
 
 From the dataset page:
 
@@ -280,7 +349,7 @@ This project builds on and integrates with:
 - [FastAPI](https://fastapi.tiangolo.com/) for the local web app.
 - [uv](https://docs.astral.sh/uv/) for Python dependency and environment management.
 - [kohya-ss/sd-scripts](https://github.com/kohya-ss/sd-scripts) for Anima LoRA training.
-- [kohya-ss/musubi-tuner](https://github.com/kohya-ss/musubi-tuner) for Qwen Image Edit-2511 LoRA training.
+- [kohya-ss/musubi-tuner](https://github.com/kohya-ss/musubi-tuner) for Qwen Image Edit-2511 and Krea 2 LoRA training.
 - [Modal](https://modal.com/) for optional remote Qwen training.
 - Codex for optional local generation, captioning, and curation workflows.
 

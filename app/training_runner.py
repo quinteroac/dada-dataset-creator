@@ -16,7 +16,9 @@ TRAINING_JOB_TYPES = {
     "setup_ai_toolkit",
     "train_anima_lora",
     "train_qwen_edit_lora",
+    "train_krea2_lora",
     "train_ideogram4_lora",
+    "train_minimax_h3_lora",
 }
 
 
@@ -89,6 +91,10 @@ class TrainingJobRunner:
                 await self._run_qwen_training(job, service)
             elif job.type == "train_ideogram4_lora":
                 await self._run_ideogram4_training(job, service)
+            elif job.type == "train_minimax_h3_lora":
+                await self._run_minimax_h3_training(job, service)
+            elif job.type == "train_krea2_lora":
+                await self._run_krea2_training(job, service)
             else:
                 raise ValueError(f"Unsupported training job type: {job.type}")
         except Exception as exc:
@@ -213,6 +219,24 @@ class TrainingJobRunner:
             return_code=result.return_code,
         )
 
+    async def _run_minimax_h3_training(self, job: CodexJob, service: TrainingService) -> None:
+        remote = job.payload.get("training_backend") == "modal"
+        build = service.build_minimax_h3_modal_command if remote else service.build_minimax_h3_train_command
+        train = service.train_minimax_h3_lora_on_modal if remote else service.train_minimax_h3_lora
+        command = build(job.dataset_slug, job.payload)
+        self.job_store.update_job(job.dataset_slug, job.id, command=command)
+        result = await train(
+            job.dataset_slug, job.payload,
+            lambda line: self.job_store.append_log(job.dataset_slug, job.id, line),
+            lambda process: self._set_process(job, process),
+        )
+        if result.return_code != 0:
+            self.job_store.mark_error(job.dataset_slug, job.id, f"MiniMax H3 training failed with exit code {result.return_code}")
+            self.job_store.update_job(job.dataset_slug, job.id, return_code=result.return_code)
+            return
+        self.job_store.mark_success(job.dataset_slug, job.id, "MiniMax H3 image LoRA training finished",
+                                    output_path=result.output_path, return_code=result.return_code)
+
     async def _run_ideogram4_training(self, job: CodexJob, service: TrainingService) -> None:
         self.dataset_store.write_dataset_toml(self.dataset_store.load_settings(job.dataset_slug))
         command = service.build_ideogram4_train_command(job.dataset_slug, job.payload)
@@ -235,6 +259,42 @@ class TrainingJobRunner:
             job.dataset_slug,
             job.id,
             "Ideogram4 LoRA training finished",
+            output_path=result.output_path,
+            return_code=result.return_code,
+        )
+
+    async def _run_krea2_training(self, job: CodexJob, service: TrainingService) -> None:
+        self.dataset_store.write_dataset_toml(self.dataset_store.load_settings(job.dataset_slug))
+        training_backend = str(job.payload.get("training_backend", "local"))
+        command = (
+            service.build_krea2_modal_command(job.dataset_slug, job.payload)
+            if training_backend == "modal"
+            else service.build_krea2_train_command(job.dataset_slug, job.payload)
+        )
+        self.job_store.update_job(job.dataset_slug, job.id, command=command)
+        train = (
+            service.train_krea2_lora_on_modal
+            if training_backend == "modal"
+            else service.train_krea2_lora
+        )
+        result = await train(
+            job.dataset_slug,
+            job.payload,
+            lambda line: self.job_store.append_log(job.dataset_slug, job.id, line),
+            lambda process: self._set_process(job, process),
+        )
+        if result.return_code != 0:
+            self.job_store.mark_error(
+                job.dataset_slug,
+                job.id,
+                f"Krea 2 training failed with exit code {result.return_code}",
+            )
+            self.job_store.update_job(job.dataset_slug, job.id, return_code=result.return_code)
+            return
+        self.job_store.mark_success(
+            job.dataset_slug,
+            job.id,
+            "Krea 2 LoRA training finished",
             output_path=result.output_path,
             return_code=result.return_code,
         )

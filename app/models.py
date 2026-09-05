@@ -9,6 +9,8 @@ from typing import Any
 SUPPORTED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 DATASET_TYPE_QWEN_IMAGE_EDIT_2511 = "qwen_image_edit_2511"
 DATASET_TYPE_IDEOGRAM4 = "ideogram4"
+DATASET_TYPE_KREA2 = "krea2"
+DATASET_TYPE_MINIMAX_H3 = "minimax_h3"
 
 
 @dataclass(slots=True)

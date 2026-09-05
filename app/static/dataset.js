@@ -6,7 +6,7 @@ const completedJobs = new Set(readCompletedJobs());
 const qwenVramPreset = document.querySelector("#qwen-vram-preset");
 const qwenBlocksToSwap = document.querySelector("#qwen-blocks-to-swap");
 const qwenNetworkDim = document.querySelector('input[name="network_dim"]');
-const qwenTrainingBackend = document.querySelector("#qwen-training-backend");
+const trainingBackend = document.querySelector("[data-training-backend], #qwen-training-backend");
 const modalTrainingOptions = document.querySelector(".modal-training-options");
 const imageSelectionBoxes = [...document.querySelectorAll("[data-image-select]")];
 const selectedImageCount = document.querySelector("[data-selected-image-count]");
@@ -35,12 +35,12 @@ if (qwenVramPreset && qwenBlocksToSwap && qwenNetworkDim) {
 }
 
 function syncTrainingBackendOptions() {
-  if (!qwenTrainingBackend || !modalTrainingOptions) return;
-  modalTrainingOptions.hidden = qwenTrainingBackend.value !== "modal";
+  if (!trainingBackend || !modalTrainingOptions) return;
+  modalTrainingOptions.hidden = trainingBackend.value !== "modal";
 }
 
-if (qwenTrainingBackend) {
-  qwenTrainingBackend.addEventListener("change", syncTrainingBackendOptions);
+if (trainingBackend) {
+  trainingBackend.addEventListener("change", syncTrainingBackendOptions);
   syncTrainingBackendOptions();
 }
 
@@ -126,6 +126,7 @@ function renderJobs(jobs) {
       "train_anima_lora",
       "train_qwen_edit_lora",
       "train_ideogram4_lora",
+      "train_minimax_h3_lora",
       "setup_musubi_tuner",
       "setup_sd_scripts",
       "setup_ai_toolkit",
